@@ -10,7 +10,7 @@ Body: {
 "device_id": "string"
 }
 
-##
+#
 Response: {
 "token": "string",
 "refresh_token": "string",
@@ -30,6 +30,8 @@ Response: {
 ### Vérifier l'abonnement
 GET /wp-json/col-lms/v1/auth/verify
 Headers: Authorization: Bearer {token}
+
+#
 Response: {
 "is_active": true,
 "subscription": {
