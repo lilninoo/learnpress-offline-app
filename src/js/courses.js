@@ -504,6 +504,26 @@ function loadDownloads() {
     updateDownloadDisplay();
 }
 
+
+// Ajouter la reprise de téléchargement
+async function resumeDownload(downloadId) {
+    const download = CoursesState.downloadQueue.get(downloadId);
+    if (!download) return;
+    
+    download.status = 'pending';
+    download.error = null;
+    
+    // Relancer le téléchargement
+    processDownloadQueue();
+}
+
+// Ajouter un bouton de reprise dans createDownloadElement()
+${download.status === 'error' ? `
+    <button class="btn btn-primary btn-sm" onclick="window.coursesManager.resumeDownload('${download.id}')">
+        Réessayer
+    </button>
+` : ''}
+
 // Utilitaires
 function getMediaType(filename) {
     const ext = filename.split('.').pop().toLowerCase();
