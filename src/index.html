@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
+    <title>LearnPress Offline</title>
+    <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+    <!-- Page de connexion -->
+    <div id="login-page" class="page active">
+        <div class="login-container">
+            <div class="login-box">
+                <div class="login-header">
+                    <div class="login-logo">
+                        <svg width="80" height="80" viewBox="0 0 24 24" fill="#667eea">
+                            <path d="M12 2L2 7L12 12L22 7L12 2Z"/>
+                            <path d="M2 17L12 22L22 17"/>
+                            <path d="M2 12L12 17L22 12"/>
+                        </svg>
+                    </div>
+                    <h1 class="app-title">LearnPress Offline</h1>
+                    <p class="app-subtitle">Apprentissage hors ligne sécurisé</p>
+                </div>
+                
+                <form id="login-form">
+                    <div class="form-group">
+                        <label for="api-url">URL du site WordPress</label>
+                        <input type="url" id="api-url" name="api-url" class="form-control"
+                               placeholder="https://votre-site.com" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="username">Nom d'utilisateur ou Email</label>
+                        <input type="text" id="username" name="username" class="form-control"
+                               placeholder="utilisateur@email.com" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="password">Mot de passe</label>
+                        <input type="password" id="password" name="password" class="form-control"
+                               placeholder="••••••••" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="remember-me" name="remember-me">
+                            <span>Se souvenir de moi</span>
+                        </label>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary btn-block" id="login-btn">
+                        <span class="btn-text">Se connecter</span>
+                        <span class="btn-loader hidden">
+                            <span class="spinner-small"></span>
+                            Connexion...
+                        </span>
+                    </button>
+                </form>
+                
+                <div id="login-error" class="message message-error hidden"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dashboard principal -->
+    <div id="dashboard-page" class="page hidden">
+        <div class="app-container">
+            <!-- Header -->
+            <header class="app-header">
+                <div class="header-left">
+                    <button class="btn btn-icon" id="menu-toggle">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
+                        </svg>
+                    </button>
+                    <h1 class="header-title">Mes Cours</h1>
+                    <span class="user-info" id="user-display-name"></span>
+                </div>
+                
+                <div class="header-right">
+                    <button class="btn btn-icon" id="search-btn" title="Rechercher">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+                        </svg>
+                    </button>
+                    
+                    <button class="btn btn-icon" id="sync-btn" title="Synchroniser">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
+                        </svg>
+                    </button>
+                    
+                    <button class="btn btn-icon" id="settings-btn" title="Paramètres">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
+                        </svg>
+                    </button>
+                    
+                    <button class="btn btn-icon" id="logout-btn" title="Déconnexion">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>
+                        </svg>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Main Content -->
+            <div class="main-content">
+                <!-- Sidebar -->
+                <aside class="sidebar" id="sidebar">
+                    <nav class="sidebar-nav">
+                        <a href="#" class="nav-item active" data-page="courses">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2l-5.5 9h11z"/>
+                                <circle cx="17.5" cy="17.5" r="4.5"/>
+                                <path d="M3 13.5h8v8H3z"/>
+                            </svg>
+                            <span>Mes Cours</span>
+                        </a>
+                        
+                        <a href="#" class="nav-item" data-page="downloads">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                            </svg>
+                            <span>Téléchargements</span>
+                        </a>
+                        
+                        <a href="#" class="nav-item" data-page="progress">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M13 2.05v3.03c3.39.49 6 3.39 6 6.92 0 .9-.18 1.75-.48 2.54l2.6 1.53c.56-1.24.88-2.62.88-4.07 0-5.18-3.95-9.45-9-9.95zM12 19c-3.87 0-7-3.13-7-7 0-3.53 2.61-6.43 6-6.92V2.05c-5.06.5-9 4.76-9 9.95 0 5.52 4.47 10 9.99 10 3.31 0 6.24-1.61 8.06-4.09l-2.6-1.53C16.17 17.98 14.21 19 12 19z"/>
+                            </svg>
+                            <span>Ma Progression</span>
+                        </a>
+                    </nav>
+                    
+                    <div class="sidebar-footer">
+                        <div class="storage-info">
+                            <div class="storage-label">Espace utilisé</div>
+                            <div class="storage-bar">
+                                <div class="storage-bar-fill" id="storage-bar"></div>
+                            </div>
+                            <div class="storage-text" id="storage-text">0 MB / 0 GB</div>
+                        </div>
+                    </div>
+                </aside>
+
+                <!-- Content Area -->
+                <main class="content-area" id="content-area">
+                    <!-- Courses Page -->
+                    <div class="content-page active" id="courses-page">
+                        <div class="content-header">
+                            <h2>Mes cours téléchargés</h2>
+                            <button class="btn btn-primary" id="download-course-btn">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                                </svg>
+                                Télécharger un cours
+                            </button>
+                        </div>
+
+                        <div class="search-bar hidden" id="search-bar">
+                            <input type="text" class="form-control" id="search-input" 
+                                   placeholder="Rechercher un cours...">
+                        </div>
+
+                        <div id="courses-container">
+                            <div class="loading">
+                                <div class="spinner"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Downloads Page -->
+                    <div class="content-page hidden" id="downloads-page">
+                        <div class="content-header">
+                            <h2>Téléchargements en cours</h2>
+                        </div>
+                        <div id="downloads-container"></div>
+                    </div>
+
+                    <!-- Progress Page -->
+                    <div class="content-page hidden" id="progress-page">
+                        <div class="content-header">
+                            <h2>Ma progression</h2>
+                        </div>
+                        <div id="progress-container"></div>
+                    </div>
+                </main>
+            </div>
+        </div>
+    </div>
+
+    <!-- Course Player -->
+    <div id="player-page" class="page hidden">
+        <div class="player-container">
+            <div class="player-header">
+                <button class="btn btn-icon" id="back-to-courses">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+                    </svg>
+                </button>
+                <h2 id="course-title">Titre du cours</h2>
+                <div class="player-actions">
+                    <button class="btn btn-icon" id="fullscreen-btn">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="player-main">
+                <div class="player-sidebar">
+                    <h3>Contenu du cours</h3>
+                    <div id="course-sections"></div>
+                </div>
+
+                <div class="player-content">
+                    <div id="lesson-content"></div>
+                    
+                    <div class="player-navigation">
+                        <button class="btn btn-secondary" id="prev-lesson">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
+                            </svg>
+                            Précédent
+                        </button>
+                        
+                        <button class="btn btn-primary" id="complete-lesson">
+                            Marquer comme terminé
+                        </button>
+                        
+                        <button class="btn btn-secondary" id="next-lesson">
+                            Suivant
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div id="download-modal" class="modal-backdrop hidden">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title">Télécharger un cours</h3>
+                <button class="btn btn-icon" id="close-download-modal">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="course-select">Sélectionner un cours</label>
+                    <select id="course-select" class="form-control">
+                        <option value="">Chargement des cours...</option>
+                    </select>
+                </div>
+                
+                <div class="download-options">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="include-videos" checked>
+                        <span>Inclure les vidéos</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="include-documents" checked>
+                        <span>Inclure les documents</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="compress-media">
+                        <span>Compresser les médias (économie d'espace)</span>
+                    </label>
+                </div>
+                
+                <div id="download-info" class="message message-info hidden"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancel-download">Annuler</button>
+                <button class="btn btn-primary" id="start-download">Télécharger</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal-backdrop hidden">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title">Paramètres</h3>
+                <button class="btn btn-icon" id="close-settings-modal">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="settings-section">
+                    <h4>Synchronisation</h4>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="auto-sync" checked>
+                        <span>Synchronisation automatique au démarrage</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="sync-progress" checked>
+                        <span>Synchroniser la progression</span>
+                    </label>
+                </div>
+                
+                <div class="settings-section">
+                    <h4>Stockage</h4>
+                    <div class="form-group">
+                        <label for="storage-location">Dossier de stockage</label>
+                        <div class="input-group">
+                            <input type="text" id="storage-location" class="form-control" readonly>
+                            <button class="btn btn-secondary" id="change-storage">Changer</button>
+                        </div>
+                    </div>
+                    <button class="btn btn-warning" id="clear-cache">Vider le cache</button>
+                </div>
+                
+                <div class="settings-section">
+                    <h4>Sécurité</h4>
+                    <button class="btn btn-secondary" id="change-password">Changer le mot de passe</button>
+                    <button class="btn btn-danger" id="reset-app">Réinitialiser l'application</button>
+                </div>
+                
+                <div class="settings-section">
+                    <h4>À propos</h4>
+                    <p class="about-info">
+                        <strong>LearnPress Offline</strong><br>
+                        Version: <span id="app-version">1.0.0</span><br>
+                        <a href="#" onclick="window.electronAPI.openExternal('https://github.com/votre-repo')">Code source</a>
+                    </p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="save-settings">Enregistrer</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Global Loader -->
+    <div id="global-loader" class="loader-overlay">
+        <div class="loader-content">
+            <div class="spinner"></div>
+            <p>Chargement...</p>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/utils.js"></script>
+    <script src="js/app.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/courses.js"></script>
+    <script src="js/player.js"></script>
+    <script src="js/sync.js"></script>
+</body>
+</html>
