@@ -6,6 +6,11 @@
  * @since 1.0.0
  */
 
+// Empêcher l'accès direct
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 class COL_LMS_Admin {
     
     private $plugin_name = 'col-lms-offline-api';
@@ -18,6 +23,8 @@ class COL_LMS_Admin {
         add_action('wp_ajax_col_lms_get_stats', array($this, 'ajax_get_stats'));
         add_action('wp_ajax_col_lms_clear_tokens', array($this, 'ajax_clear_tokens'));
         add_action('wp_ajax_col_lms_test_api', array($this, 'ajax_test_api'));
+        add_action('wp_ajax_col_lms_revoke_token', array($this, 'ajax_revoke_token'));
+        add_action('wp_ajax_col_lms_export_stats', array($this, 'ajax_export_stats'));
         
         // Ajouter une colonne dans la liste des utilisateurs
         add_filter('manage_users_columns', array($this, 'add_user_columns'));
@@ -86,61 +93,197 @@ class COL_LMS_Admin {
      */
     public function register_settings() {
         // Groupe de paramètres généraux
-        register_setting('col_lms_general_settings', 'col_lms_api_enabled');
-        register_setting('col_lms_general_settings', 'col_lms_require_membership');
-        register_setting('col_lms_general_settings', 'col_lms_allowed_membership_levels');
-        register_setting('col_lms_general_settings', 'col_lms_token_lifetime');
-        register_setting('col_lms_general_settings', 'col_lms_max_devices_per_user');
+        register_setting(
+            'col_lms_general_settings',
+            'col_lms_api_enabled',
+            array(
+                'type' => 'boolean',
+                'default' => true,
+                'sanitize_callback' => 'rest_sanitize_boolean'
+            )
+        );
+        
+        register_setting(
+            'col_lms_general_settings',
+            'col_lms_require_membership',
+            array(
+                'type' => 'boolean',
+                'default' => false,
+                'sanitize_callback' => 'rest_sanitize_boolean'
+            )
+        );
+        
+        register_setting(
+            'col_lms_general_settings',
+            'col_lms_allowed_membership_levels',
+            array(
+                'type' => 'array',
+                'default' => array(),
+                'sanitize_callback' => array($this, 'sanitize_membership_levels')
+            )
+        );
+        
+        register_setting(
+            'col_lms_general_settings',
+            'col_lms_token_lifetime',
+            array(
+                'type' => 'integer',
+                'default' => 3600,
+                'sanitize_callback' => 'absint'
+            )
+        );
+        
+        register_setting(
+            'col_lms_general_settings',
+            'col_lms_max_devices_per_user',
+            array(
+                'type' => 'integer',
+                'default' => 5,
+                'sanitize_callback' => 'absint'
+            )
+        );
         
         // Groupe de paramètres de sécurité
-        register_setting('col_lms_security_settings', 'col_lms_enable_rate_limiting');
-        register_setting('col_lms_security_settings', 'col_lms_rate_limit_requests');
-        register_setting('col_lms_security_settings', 'col_lms_rate_limit_window');
-        register_setting('col_lms_security_settings', 'col_lms_enable_ip_whitelist');
-        register_setting('col_lms_security_settings', 'col_lms_ip_whitelist');
+        register_setting(
+            'col_lms_security_settings',
+            'col_lms_enable_rate_limiting',
+            array(
+                'type' => 'boolean',
+                'default' => true,
+                'sanitize_callback' => 'rest_sanitize_boolean'
+            )
+        );
+        
+        register_setting(
+            'col_lms_security_settings',
+            'col_lms_rate_limit_requests',
+            array(
+                'type' => 'integer',
+                'default' => 100,
+                'sanitize_callback' => 'absint'
+            )
+        );
+        
+        register_setting(
+            'col_lms_security_settings',
+            'col_lms_rate_limit_window',
+            array(
+                'type' => 'integer',
+                'default' => 3600,
+                'sanitize_callback' => 'absint'
+            )
+        );
+        
+        register_setting(
+            'col_lms_security_settings',
+            'col_lms_enable_ip_whitelist',
+            array(
+                'type' => 'boolean',
+                'default' => false,
+                'sanitize_callback' => 'rest_sanitize_boolean'
+            )
+        );
+        
+        register_setting(
+            'col_lms_security_settings',
+            'col_lms_ip_whitelist',
+            array(
+                'type' => 'array',
+                'default' => array(),
+                'sanitize_callback' => array($this, 'sanitize_ip_list')
+            )
+        );
         
         // Groupe de paramètres de téléchargement
-        register_setting('col_lms_download_settings', 'col_lms_enable_course_packages');
-        register_setting('col_lms_download_settings', 'col_lms_package_expiry_hours');
-        register_setting('col_lms_download_settings', 'col_lms_max_package_size');
-        register_setting('col_lms_download_settings', 'col_lms_allowed_file_types');
+        register_setting(
+            'col_lms_download_settings',
+            'col_lms_enable_course_packages',
+            array(
+                'type' => 'boolean',
+                'default' => true,
+                'sanitize_callback' => 'rest_sanitize_boolean'
+            )
+        );
+        
+        register_setting(
+            'col_lms_download_settings',
+            'col_lms_package_expiry_hours',
+            array(
+                'type' => 'integer',
+                'default' => 24,
+                'sanitize_callback' => 'absint'
+            )
+        );
+        
+        register_setting(
+            'col_lms_download_settings',
+            'col_lms_max_package_size',
+            array(
+                'type' => 'integer',
+                'default' => 2147483648,
+                'sanitize_callback' => 'absint'
+            )
+        );
+        
+        register_setting(
+            'col_lms_download_settings',
+            'col_lms_allowed_file_types',
+            array(
+                'type' => 'array',
+                'default' => array('pdf', 'doc', 'docx', 'mp4', 'mp3'),
+                'sanitize_callback' => array($this, 'sanitize_file_types')
+            )
+        );
     }
     
     /**
      * Charger les assets admin
      */
     public function enqueue_admin_assets($hook) {
+        // Vérifier si on est sur une page du plugin
         if (strpos($hook, $this->plugin_name) === false) {
             return;
         }
         
+        // CSS Admin
         wp_enqueue_style(
             $this->plugin_name . '-admin',
-            plugin_dir_url(__FILE__) . 'css/admin.css',
+            COL_LMS_API_URL . 'admin/css/admin.css',
             array(),
             $this->version
         );
         
+        // JavaScript Admin
         wp_enqueue_script(
             $this->plugin_name . '-admin',
-            plugin_dir_url(__FILE__) . 'js/admin.js',
+            COL_LMS_API_URL . 'admin/js/admin.js',
             array('jquery', 'wp-api'),
             $this->version,
             true
         );
         
+        // Localisation JavaScript
         wp_localize_script($this->plugin_name . '-admin', 'col_lms_admin', array(
             'ajax_url' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('col_lms_admin'),
+            'rest_url' => rest_url(COL_LMS_API_NAMESPACE . '/'),
             'strings' => array(
                 'confirm_clear_tokens' => __('Êtes-vous sûr de vouloir supprimer tous les tokens ?', 'col-lms-offline-api'),
                 'test_success' => __('Test réussi !', 'col-lms-offline-api'),
-                'test_failed' => __('Test échoué', 'col-lms-offline-api')
+                'test_failed' => __('Test échoué', 'col-lms-offline-api'),
+                'loading' => __('Chargement...', 'col-lms-offline-api'),
+                'error' => __('Erreur', 'col-lms-offline-api'),
+                'success' => __('Succès', 'col-lms-offline-api')
             )
         ));
         
         // Chart.js pour les graphiques
-        wp_enqueue_script('chartjs', 'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js', array(), '3.9.1');
+        wp_enqueue_script(
+            'chartjs',
+            'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js',
+            array(),
+            '3.9.1'
+        );
     }
     
     /**
@@ -159,10 +302,10 @@ class COL_LMS_Admin {
             <?php $this->display_notices(); ?>
             
             <!-- Statut de l'API -->
-            <div class="col-lms-status-box <?php echo get_option('col_lms_api_enabled') ? 'active' : 'inactive'; ?>">
+            <div class="col-lms-status-box <?php echo get_option('col_lms_api_enabled', true) ? 'active' : 'inactive'; ?>">
                 <h2><?php _e('Statut de l\'API', 'col-lms-offline-api'); ?></h2>
                 <p class="status">
-                    <?php if (get_option('col_lms_api_enabled')): ?>
+                    <?php if (get_option('col_lms_api_enabled', true)): ?>
                         <span class="dashicons dashicons-yes-alt"></span>
                         <?php _e('API Active', 'col-lms-offline-api'); ?>
                     <?php else: ?>
@@ -229,23 +372,29 @@ class COL_LMS_Admin {
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($stats['recent_logins'] as $login): ?>
-                        <tr>
-                            <td>
-                                <?php
-                                $user = get_userdata($login->user_id);
-                                echo $user ? esc_html($user->display_name) : __('Utilisateur supprimé', 'col-lms-offline-api');
-                                ?>
-                            </td>
-                            <td><?php echo esc_html($login->device_name ?: $login->device_id); ?></td>
-                            <td><?php echo human_time_diff(strtotime($login->last_used), current_time('timestamp')) . ' ' . __('ago', 'col-lms-offline-api'); ?></td>
-                            <td>
-                                <button class="button button-small revoke-token" data-token-id="<?php echo $login->id; ?>">
-                                    <?php _e('Révoquer', 'col-lms-offline-api'); ?>
-                                </button>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
+                        <?php if (!empty($stats['recent_logins'])): ?>
+                            <?php foreach ($stats['recent_logins'] as $login): ?>
+                            <tr>
+                                <td>
+                                    <?php
+                                    $user = get_userdata($login->user_id);
+                                    echo $user ? esc_html($user->display_name) : __('Utilisateur supprimé', 'col-lms-offline-api');
+                                    ?>
+                                </td>
+                                <td><?php echo esc_html($login->device_name ?: $login->device_id); ?></td>
+                                <td><?php echo $login->last_used ? human_time_diff(strtotime($login->last_used), current_time('timestamp')) . ' ' . __('ago', 'col-lms-offline-api') : __('Jamais', 'col-lms-offline-api'); ?></td>
+                                <td>
+                                    <button class="button button-small revoke-token" data-token-id="<?php echo $login->id; ?>">
+                                        <?php _e('Révoquer', 'col-lms-offline-api'); ?>
+                                    </button>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <tr>
+                                <td colspan="4"><?php _e('Aucune connexion récente', 'col-lms-offline-api'); ?></td>
+                            </tr>
+                        <?php endif; ?>
                     </tbody>
                 </table>
             </div>
@@ -273,7 +422,9 @@ class COL_LMS_Admin {
         <script>
         jQuery(document).ready(function($) {
             // Charger les données des graphiques
-            loadChartData();
+            if (typeof loadChartData === 'function') {
+                loadChartData();
+            }
         });
         </script>
         <?php
@@ -283,11 +434,19 @@ class COL_LMS_Admin {
      * Page des paramètres
      */
     public function display_settings_page() {
+        // Traitement du formulaire
+        if (isset($_POST['submit']) && check_admin_referer('col_lms_settings_nonce')) {
+            $this->save_settings();
+            echo '<div class="notice notice-success"><p>' . __('Paramètres sauvegardés.', 'col-lms-offline-api') . '</p></div>';
+        }
+        
         ?>
         <div class="wrap">
             <h1><?php _e('Paramètres - LMS Offline API', 'col-lms-offline-api'); ?></h1>
             
-            <form method="post" action="options.php">
+            <form method="post" action="">
+                <?php wp_nonce_field('col_lms_settings_nonce'); ?>
+                
                 <div class="nav-tab-wrapper">
                     <a href="#general" class="nav-tab nav-tab-active"><?php _e('Général', 'col-lms-offline-api'); ?></a>
                     <a href="#security" class="nav-tab"><?php _e('Sécurité', 'col-lms-offline-api'); ?></a>
@@ -297,15 +456,13 @@ class COL_LMS_Admin {
                 
                 <!-- Paramètres généraux -->
                 <div id="general" class="tab-content">
-                    <?php settings_fields('col_lms_general_settings'); ?>
-                    
                     <table class="form-table">
                         <tr>
                             <th scope="row"><?php _e('Activer l\'API', 'col-lms-offline-api'); ?></th>
                             <td>
                                 <label>
                                     <input type="checkbox" name="col_lms_api_enabled" value="1" 
-                                           <?php checked(get_option('col_lms_api_enabled'), 1); ?>>
+                                           <?php checked(get_option('col_lms_api_enabled', true), 1); ?>>
                                     <?php _e('Activer l\'API REST pour l\'application offline', 'col-lms-offline-api'); ?>
                                 </label>
                             </td>
@@ -316,7 +473,7 @@ class COL_LMS_Admin {
                             <td>
                                 <label>
                                     <input type="checkbox" name="col_lms_require_membership" value="1"
-                                           <?php checked(get_option('col_lms_require_membership'), 1); ?>>
+                                           <?php checked(get_option('col_lms_require_membership', false), 1); ?>>
                                     <?php _e('Nécessite un abonnement Paid Memberships Pro actif', 'col-lms-offline-api'); ?>
                                 </label>
                             </td>
@@ -384,15 +541,13 @@ class COL_LMS_Admin {
                 
                 <!-- Paramètres de sécurité -->
                 <div id="security" class="tab-content" style="display: none;">
-                    <?php settings_fields('col_lms_security_settings'); ?>
-                    
                     <table class="form-table">
                         <tr>
                             <th scope="row"><?php _e('Limitation de débit', 'col-lms-offline-api'); ?></th>
                             <td>
                                 <label>
                                     <input type="checkbox" name="col_lms_enable_rate_limiting" value="1"
-                                           <?php checked(get_option('col_lms_enable_rate_limiting'), 1); ?>>
+                                           <?php checked(get_option('col_lms_enable_rate_limiting', true), 1); ?>>
                                     <?php _e('Activer la limitation de débit', 'col-lms-offline-api'); ?>
                                 </label>
                             </td>
@@ -420,7 +575,7 @@ class COL_LMS_Admin {
                             <td>
                                 <label>
                                     <input type="checkbox" name="col_lms_enable_ip_whitelist" value="1"
-                                           <?php checked(get_option('col_lms_enable_ip_whitelist'), 1); ?>>
+                                           <?php checked(get_option('col_lms_enable_ip_whitelist', false), 1); ?>>
                                     <?php _e('Activer la liste blanche d\'IP', 'col-lms-offline-api'); ?>
                                 </label>
                                 
@@ -428,10 +583,79 @@ class COL_LMS_Admin {
                                 
                                 <textarea name="col_lms_ip_whitelist" rows="5" cols="50" 
                                           placeholder="192.168.1.1&#10;10.0.0.0/24"
-                                ><?php echo esc_textarea(implode("\n", get_option('col_lms_ip_whitelist', array()))); ?></textarea>
+                                ><?php 
+                                $whitelist = get_option('col_lms_ip_whitelist', array());
+                                echo is_array($whitelist) ? esc_textarea(implode("\n", $whitelist)) : esc_textarea($whitelist);
+                                ?></textarea>
                                 <p class="description">
                                     <?php _e('Une IP ou plage d\'IP par ligne', 'col-lms-offline-api'); ?>
                                 </p>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+                
+                <!-- Paramètres de téléchargement -->
+                <div id="download" class="tab-content" style="display: none;">
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row"><?php _e('Packages de cours', 'col-lms-offline-api'); ?></th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" name="col_lms_enable_course_packages" value="1"
+                                           <?php checked(get_option('col_lms_enable_course_packages', true), 1); ?>>
+                                    <?php _e('Activer la création de packages de cours', 'col-lms-offline-api'); ?>
+                                </label>
+                            </td>
+                        </tr>
+                        
+                        <tr>
+                            <th scope="row">
+                                <label for="col_lms_package_expiry_hours">
+                                    <?php _e('Expiration des packages', 'col-lms-offline-api'); ?>
+                                </label>
+                            </th>
+                            <td>
+                                <input type="number" id="col_lms_package_expiry_hours" 
+                                       name="col_lms_package_expiry_hours" 
+                                       value="<?php echo get_option('col_lms_package_expiry_hours', 24); ?>" 
+                                       min="1" max="168">
+                                <p class="description">
+                                    <?php _e('Durée en heures avant expiration automatique', 'col-lms-offline-api'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        
+                        <tr>
+                            <th scope="row">
+                                <label for="col_lms_max_package_size">
+                                    <?php _e('Taille maximum des packages', 'col-lms-offline-api'); ?>
+                                </label>
+                            </th>
+                            <td>
+                                <input type="number" id="col_lms_max_package_size" 
+                                       name="col_lms_max_package_size" 
+                                       value="<?php echo get_option('col_lms_max_package_size', 2147483648); ?>" 
+                                       min="104857600" step="104857600">
+                                <p class="description">
+                                    <?php _e('Taille en octets (2147483648 = 2GB)', 'col-lms-offline-api'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+                
+                <!-- Paramètres de synchronisation -->
+                <div id="sync" class="tab-content" style="display: none;">
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row"><?php _e('Synchronisation automatique', 'col-lms-offline-api'); ?></th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" name="col_lms_enable_auto_sync" value="1"
+                                           <?php checked(get_option('col_lms_enable_auto_sync', true), 1); ?>>
+                                    <?php _e('Activer la synchronisation automatique', 'col-lms-offline-api'); ?>
+                                </label>
                             </td>
                         </tr>
                     </table>
@@ -458,52 +682,278 @@ class COL_LMS_Admin {
     }
     
     /**
+     * Page d'activité
+     */
+    public function display_activity_page() {
+        global $wpdb;
+        
+        // Récupérer les logs récents
+        $logs = $wpdb->get_results("
+            SELECT * FROM {$wpdb->prefix}col_lms_logs 
+            ORDER BY created_at DESC 
+            LIMIT 100
+        ");
+        
+        ?>
+        <div class="wrap">
+            <h1><?php _e('Activité - LMS Offline API', 'col-lms-offline-api'); ?></h1>
+            
+            <div class="activity-filters">
+                <div class="filter-group">
+                    <label><?php _e('Action:', 'col-lms-offline-api'); ?></label>
+                    <select id="filter-action">
+                        <option value=""><?php _e('Toutes', 'col-lms-offline-api'); ?></option>
+                        <option value="login"><?php _e('Connexions', 'col-lms-offline-api'); ?></option>
+                        <option value="download"><?php _e('Téléchargements', 'col-lms-offline-api'); ?></option>
+                        <option value="sync"><?php _e('Synchronisations', 'col-lms-offline-api'); ?></option>
+                    </select>
+                </div>
+                
+                <div class="filter-group">
+                    <label><?php _e('Utilisateur:', 'col-lms-offline-api'); ?></label>
+                    <input type="text" id="filter-user" placeholder="<?php _e('Nom d\'utilisateur', 'col-lms-offline-api'); ?>">
+                </div>
+                
+                <button class="button" id="apply-filters"><?php _e('Filtrer', 'col-lms-offline-api'); ?></button>
+            </div>
+            
+            <div class="activity-table">
+                <table class="wp-list-table widefat fixed striped">
+                    <thead>
+                        <tr>
+                            <th><?php _e('Date', 'col-lms-offline-api'); ?></th>
+                            <th><?php _e('Action', 'col-lms-offline-api'); ?></th>
+                            <th><?php _e('Utilisateur', 'col-lms-offline-api'); ?></th>
+                            <th><?php _e('IP', 'col-lms-offline-api'); ?></th>
+                            <th><?php _e('Détails', 'col-lms-offline-api'); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($logs as $log): ?>
+                        <tr>
+                            <td><?php echo date('d/m/Y H:i', strtotime($log->created_at)); ?></td>
+                            <td><?php echo esc_html($log->action); ?></td>
+                            <td>
+                                <?php 
+                                if ($log->user_id) {
+                                    $user = get_userdata($log->user_id);
+                                    echo $user ? esc_html($user->display_name) : 'ID: ' . $log->user_id;
+                                } else {
+                                    echo '-';
+                                }
+                                ?>
+                            </td>
+                            <td><?php echo esc_html($log->ip_address); ?></td>
+                            <td>
+                                <?php 
+                                $details = json_decode($log->details, true);
+                                if (is_array($details) && !empty($details)) {
+                                    echo '<details><summary>' . __('Voir détails', 'col-lms-offline-api') . '</summary>';
+                                    echo '<pre>' . esc_html(wp_json_encode($details, JSON_PRETTY_PRINT)) . '</pre>';
+                                    echo '</details>';
+                                } else {
+                                    echo '-';
+                                }
+                                ?>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <?php
+    }
+    
+    /**
+     * Page de documentation
+     */
+    public function display_docs_page() {
+        ?>
+        <div class="wrap">
+            <h1><?php _e('Documentation - LMS Offline API', 'col-lms-offline-api'); ?></h1>
+            
+            <div class="docs-container">
+                <div class="docs-sidebar">
+                    <h4><?php _e('Navigation', 'col-lms-offline-api'); ?></h4>
+                    <ul>
+                        <li><a href="#installation"><?php _e('Installation', 'col-lms-offline-api'); ?></a></li>
+                        <li><a href="#configuration"><?php _e('Configuration', 'col-lms-offline-api'); ?></a></li>
+                        <li><a href="#api-endpoints"><?php _e('Endpoints API', 'col-lms-offline-api'); ?></a></li>
+                        <li><a href="#authentication"><?php _e('Authentification', 'col-lms-offline-api'); ?></a></li>
+                        <li><a href="#troubleshooting"><?php _e('Dépannage', 'col-lms-offline-api'); ?></a></li>
+                    </ul>
+                </div>
+                
+                <div class="docs-content">
+                    <section id="installation">
+                        <h2><?php _e('Installation', 'col-lms-offline-api'); ?></h2>
+                        <p><?php _e('Ce plugin nécessite LearnPress pour fonctionner. Paid Memberships Pro est optionnel pour la gestion des abonnements.', 'col-lms-offline-api'); ?></p>
+                        
+                        <h3><?php _e('Prérequis', 'col-lms-offline-api'); ?></h3>
+                        <ul>
+                            <li>WordPress 5.8+</li>
+                            <li>PHP 7.4+</li>
+                            <li>LearnPress 4.0+</li>
+                            <li>HTTPS recommandé</li>
+                        </ul>
+                    </section>
+                    
+                    <section id="configuration">
+                        <h2><?php _e('Configuration', 'col-lms-offline-api'); ?></h2>
+                        <p><?php _e('Rendez-vous dans les paramètres pour configurer l\'API selon vos besoins.', 'col-lms-offline-api'); ?></p>
+                    </section>
+                    
+                    <section id="api-endpoints">
+                        <h2><?php _e('Endpoints API', 'col-lms-offline-api'); ?></h2>
+                        <p><?php _e('L\'API est accessible à l\'adresse:', 'col-lms-offline-api'); ?></p>
+                        <code><?php echo home_url('/wp-json/' . COL_LMS_API_NAMESPACE); ?></code>
+                        
+                        <h3><?php _e('Endpoints principaux', 'col-lms-offline-api'); ?></h3>
+                        <ul>
+                            <li><code>POST /auth/login</code> - <?php _e('Connexion', 'col-lms-offline-api'); ?></li>
+                            <li><code>GET /courses</code> - <?php _e('Liste des cours', 'col-lms-offline-api'); ?></li>
+                            <li><code>POST /sync/progress</code> - <?php _e('Synchronisation', 'col-lms-offline-api'); ?></li>
+                        </ul>
+                    </section>
+                    
+                    <section id="authentication">
+                        <h2><?php _e('Authentification', 'col-lms-offline-api'); ?></h2>
+                        <p><?php _e('L\'API utilise des tokens JWT pour l\'authentification.', 'col-lms-offline-api'); ?></p>
+                    </section>
+                    
+                    <section id="troubleshooting">
+                        <h2><?php _e('Dépannage', 'col-lms-offline-api'); ?></h2>
+                        
+                        <h3><?php _e('Problèmes courants', 'col-lms-offline-api'); ?></h3>
+                        <ul>
+                            <li><strong>API non accessible:</strong> Vérifiez que l'API est activée dans les paramètres</li>
+                            <li><strong>Erreurs d'authentification:</strong> Vérifiez les tokens et permissions</li>
+                            <li><strong>Packages qui échouent:</strong> Vérifiez l'espace disque et les permissions</li>
+                        </ul>
+                    </section>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+    
+    /**
+     * Sauvegarder les paramètres
+     */
+    private function save_settings() {
+        // Paramètres généraux
+        update_option('col_lms_api_enabled', !empty($_POST['col_lms_api_enabled']));
+        update_option('col_lms_require_membership', !empty($_POST['col_lms_require_membership']));
+        
+        if (isset($_POST['col_lms_allowed_membership_levels'])) {
+            update_option('col_lms_allowed_membership_levels', array_map('intval', $_POST['col_lms_allowed_membership_levels']));
+        } else {
+            update_option('col_lms_allowed_membership_levels', array());
+        }
+        
+        if (isset($_POST['col_lms_token_lifetime'])) {
+            update_option('col_lms_token_lifetime', absint($_POST['col_lms_token_lifetime']));
+        }
+        
+        if (isset($_POST['col_lms_max_devices_per_user'])) {
+            update_option('col_lms_max_devices_per_user', absint($_POST['col_lms_max_devices_per_user']));
+        }
+        
+        // Paramètres de sécurité
+        update_option('col_lms_enable_rate_limiting', !empty($_POST['col_lms_enable_rate_limiting']));
+        
+        if (isset($_POST['col_lms_rate_limit_requests'])) {
+            update_option('col_lms_rate_limit_requests', absint($_POST['col_lms_rate_limit_requests']));
+        }
+        
+        update_option('col_lms_enable_ip_whitelist', !empty($_POST['col_lms_enable_ip_whitelist']));
+        
+        if (isset($_POST['col_lms_ip_whitelist'])) {
+            $ips = explode("\n", sanitize_textarea_field($_POST['col_lms_ip_whitelist']));
+            $ips = array_filter(array_map('trim', $ips));
+            update_option('col_lms_ip_whitelist', $ips);
+        }
+        
+        // Paramètres de téléchargement
+        update_option('col_lms_enable_course_packages', !empty($_POST['col_lms_enable_course_packages']));
+        
+        if (isset($_POST['col_lms_package_expiry_hours'])) {
+            update_option('col_lms_package_expiry_hours', absint($_POST['col_lms_package_expiry_hours']));
+        }
+        
+        if (isset($_POST['col_lms_max_package_size'])) {
+            update_option('col_lms_max_package_size', absint($_POST['col_lms_max_package_size']));
+        }
+        
+        // Paramètres de synchronisation
+        update_option('col_lms_enable_auto_sync', !empty($_POST['col_lms_enable_auto_sync']));
+    }
+    
+    /**
      * Récupérer les statistiques du tableau de bord
      */
     private function get_dashboard_stats() {
         global $wpdb;
         
-        $stats = array();
+        $stats = array(
+            'active_users' => 0,
+            'active_devices' => 0,
+            'total_downloads' => 0,
+            'sync_operations' => 0,
+            'recent_logins' => array()
+        );
         
-        // Utilisateurs actifs
-        $stats['active_users'] = $wpdb->get_var("
-            SELECT COUNT(DISTINCT user_id) 
-            FROM {$wpdb->prefix}col_lms_tokens 
-            WHERE expires_at > NOW()
-        ");
+        // Vérifier si les tables existent
+        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '{$wpdb->prefix}col_lms_tokens'");
         
-        // Appareils actifs
-        $stats['active_devices'] = $wpdb->get_var("
-            SELECT COUNT(*) 
-            FROM {$wpdb->prefix}col_lms_tokens 
-            WHERE expires_at > NOW()
-        ");
+        if ($table_exists) {
+            // Utilisateurs actifs
+            $stats['active_users'] = $wpdb->get_var("
+                SELECT COUNT(DISTINCT user_id) 
+                FROM {$wpdb->prefix}col_lms_tokens 
+                WHERE expires_at > NOW()
+            ") ?: 0;
+            
+            // Appareils actifs
+            $stats['active_devices'] = $wpdb->get_var("
+                SELECT COUNT(*) 
+                FROM {$wpdb->prefix}col_lms_tokens 
+                WHERE expires_at > NOW()
+            ") ?: 0;
+            
+            // Connexions récentes
+            $stats['recent_logins'] = $wpdb->get_results("
+                SELECT t.*, u.display_name 
+                FROM {$wpdb->prefix}col_lms_tokens t
+                LEFT JOIN {$wpdb->users} u ON t.user_id = u.ID
+                WHERE t.expires_at > NOW()
+                ORDER BY t.created_at DESC
+                LIMIT 10
+            ") ?: array();
+        }
         
-        // Téléchargements ce mois
-        $stats['total_downloads'] = $wpdb->get_var("
-            SELECT COUNT(*) 
-            FROM {$wpdb->prefix}col_lms_packages 
-            WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-            AND status = 'completed'
-        ");
+        // Packages si la table existe
+        $packages_table = $wpdb->get_var("SHOW TABLES LIKE '{$wpdb->prefix}col_lms_packages'");
+        if ($packages_table) {
+            $stats['total_downloads'] = $wpdb->get_var("
+                SELECT COUNT(*) 
+                FROM {$wpdb->prefix}col_lms_packages 
+                WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                AND status = 'completed'
+            ") ?: 0;
+        }
         
-        // Synchronisations 24h
-        $stats['sync_operations'] = $wpdb->get_var("
-            SELECT COUNT(*) 
-            FROM {$wpdb->prefix}col_lms_activity_log 
-            WHERE action = 'sync' 
-            AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
-        ");
-        
-        // Connexions récentes
-        $stats['recent_logins'] = $wpdb->get_results("
-            SELECT t.*, u.display_name 
-            FROM {$wpdb->prefix}col_lms_tokens t
-            LEFT JOIN {$wpdb->users} u ON t.user_id = u.ID
-            WHERE t.expires_at > NOW()
-            ORDER BY t.last_used DESC
-            LIMIT 10
-        ");
+        // Logs si la table existe
+        $logs_table = $wpdb->get_var("SHOW TABLES LIKE '{$wpdb->prefix}col_lms_logs'");
+        if ($logs_table) {
+            $stats['sync_operations'] = $wpdb->get_var("
+                SELECT COUNT(*) 
+                FROM {$wpdb->prefix}col_lms_logs 
+                WHERE action = 'sync' 
+                AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+            ") ?: 0;
+        }
         
         return $stats;
     }
@@ -514,33 +964,45 @@ class COL_LMS_Admin {
     public function ajax_get_stats() {
         check_ajax_referer('col_lms_admin', 'nonce');
         
+        if (!current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
+        
         global $wpdb;
         
-        // Activité API 7 derniers jours
-        $api_activity = $wpdb->get_results("
-            SELECT DATE(created_at) as date, COUNT(*) as count
-            FROM {$wpdb->prefix}col_lms_activity_log
-            WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-            GROUP BY DATE(created_at)
-            ORDER BY date ASC
-        ");
+        $data = array(
+            'api_activity' => array(),
+            'popular_courses' => array()
+        );
         
-        // Cours populaires
-        $popular_courses = $wpdb->get_results("
-            SELECT course_id, COUNT(*) as downloads, p.post_title as title
-            FROM {$wpdb->prefix}col_lms_packages pkg
-            LEFT JOIN {$wpdb->posts} p ON pkg.course_id = p.ID
-            WHERE pkg.status = 'completed'
-            AND pkg.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-            GROUP BY course_id
-            ORDER BY downloads DESC
-            LIMIT 10
-        ");
+        // Activité API si la table existe
+        $logs_table = $wpdb->get_var("SHOW TABLES LIKE '{$wpdb->prefix}col_lms_logs'");
+        if ($logs_table) {
+            $data['api_activity'] = $wpdb->get_results("
+                SELECT DATE(created_at) as date, COUNT(*) as count
+                FROM {$wpdb->prefix}col_lms_logs
+                WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+                GROUP BY DATE(created_at)
+                ORDER BY date ASC
+            ") ?: array();
+        }
         
-        wp_send_json_success(array(
-            'api_activity' => $api_activity,
-            'popular_courses' => $popular_courses
-        ));
+        // Cours populaires si la table existe
+        $packages_table = $wpdb->get_var("SHOW TABLES LIKE '{$wpdb->prefix}col_lms_packages'");
+        if ($packages_table) {
+            $data['popular_courses'] = $wpdb->get_results("
+                SELECT course_id, COUNT(*) as downloads, p.post_title as title
+                FROM {$wpdb->prefix}col_lms_packages pkg
+                LEFT JOIN {$wpdb->posts} p ON pkg.course_id = p.ID
+                WHERE pkg.status = 'completed'
+                AND pkg.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                GROUP BY course_id
+                ORDER BY downloads DESC
+                LIMIT 10
+            ") ?: array();
+        }
+        
+        wp_send_json_success($data);
     }
     
     /**
@@ -554,6 +1016,13 @@ class COL_LMS_Admin {
         }
         
         global $wpdb;
+        
+        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '{$wpdb->prefix}col_lms_tokens'");
+        
+        if (!$table_exists) {
+            wp_send_json_error(array('message' => 'Table des tokens non trouvée'));
+            return;
+        }
         
         $deleted = $wpdb->query("
             DELETE FROM {$wpdb->prefix}col_lms_tokens 
@@ -572,25 +1041,22 @@ class COL_LMS_Admin {
     public function ajax_test_api() {
         check_ajax_referer('col_lms_admin', 'nonce');
         
-        $api_url = home_url('/wp-json/' . COL_LMS_API_NAMESPACE . '/courses');
+        if (!current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
         
-        // Créer un token temporaire pour le test
-        $test_token = wp_generate_password(32, false);
-        set_transient('col_lms_test_token_' . $test_token, get_current_user_id(), 60);
+        $api_url = rest_url(COL_LMS_API_NAMESPACE . '/status');
         
         $response = wp_remote_get($api_url, array(
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $test_token
-            ),
-            'timeout' => 10
+            'timeout' => 10,
+            'sslverify' => false
         ));
-        
-        delete_transient('col_lms_test_token_' . $test_token);
         
         if (is_wp_error($response)) {
             wp_send_json_error(array(
                 'message' => $response->get_error_message()
             ));
+            return;
         }
         
         $code = wp_remote_retrieve_response_code($response);
@@ -604,10 +1070,59 @@ class COL_LMS_Admin {
     }
     
     /**
+     * AJAX: Révoquer un token
+     */
+    public function ajax_revoke_token() {
+        check_ajax_referer('col_lms_admin', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
+        
+        $token_id = absint($_POST['token_id'] ?? 0);
+        
+        if (!$token_id) {
+            wp_send_json_error(array('message' => 'ID token invalide'));
+            return;
+        }
+        
+        global $wpdb;
+        
+        $deleted = $wpdb->delete(
+            $wpdb->prefix . 'col_lms_tokens',
+            array('id' => $token_id),
+            array('%d')
+        );
+        
+        if ($deleted) {
+            wp_send_json_success(array('message' => 'Token révoqué avec succès'));
+        } else {
+            wp_send_json_error(array('message' => 'Erreur lors de la révocation'));
+        }
+    }
+    
+    /**
+     * AJAX: Exporter les statistiques
+     */
+    public function ajax_export_stats() {
+        check_ajax_referer('col_lms_admin', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
+        
+        // Pour l'instant, retourner un message
+        wp_send_json_success(array(
+            'message' => 'Export des statistiques en cours...',
+            'download_url' => admin_url('admin.php?page=' . $this->plugin_name)
+        ));
+    }
+    
+    /**
      * Ajouter des colonnes utilisateur
      */
     public function add_user_columns($columns) {
-        $columns['col_lms_devices'] = __('Appareils', 'col-lms-offline-api');
+        $columns['col_lms_devices'] = __('Appareils API', 'col-lms-offline-api');
         $columns['col_lms_last_sync'] = __('Dernière sync', 'col-lms-offline-api');
         return $columns;
     }
@@ -617,6 +1132,12 @@ class COL_LMS_Admin {
      */
     public function show_user_column_data($value, $column_name, $user_id) {
         global $wpdb;
+        
+        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '{$wpdb->prefix}col_lms_tokens'");
+        
+        if (!$table_exists) {
+            return '-';
+        }
         
         switch ($column_name) {
             case 'col_lms_devices':
@@ -629,9 +1150,14 @@ class COL_LMS_Admin {
                 return $count ?: '0';
                 
             case 'col_lms_last_sync':
+                $logs_table = $wpdb->get_var("SHOW TABLES LIKE '{$wpdb->prefix}col_lms_logs'");
+                if (!$logs_table) {
+                    return '-';
+                }
+                
                 $last_sync = $wpdb->get_var($wpdb->prepare("
                     SELECT MAX(created_at) 
-                    FROM {$wpdb->prefix}col_lms_activity_log 
+                    FROM {$wpdb->prefix}col_lms_logs 
                     WHERE user_id = %d 
                     AND action = 'sync'
                 ", $user_id));
@@ -646,9 +1172,54 @@ class COL_LMS_Admin {
     }
     
     /**
+     * Ajouter des actions bulk
+     */
+    public function add_bulk_actions($actions) {
+        $actions['col_lms_revoke_all_tokens'] = __('Révoquer tous les tokens API', 'col-lms-offline-api');
+        return $actions;
+    }
+    
+    /**
+     * Gérer les actions bulk
+     */
+    public function handle_bulk_actions($redirect_to, $action, $user_ids) {
+        if ($action !== 'col_lms_revoke_all_tokens') {
+            return $redirect_to;
+        }
+        
+        if (!current_user_can('manage_options')) {
+            return $redirect_to;
+        }
+        
+        global $wpdb;
+        
+        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '{$wpdb->prefix}col_lms_tokens'");
+        
+        if ($table_exists && !empty($user_ids)) {
+            $placeholders = implode(',', array_fill(0, count($user_ids), '%d'));
+            $deleted = $wpdb->query($wpdb->prepare("
+                DELETE FROM {$wpdb->prefix}col_lms_tokens 
+                WHERE user_id IN ($placeholders)
+            ", $user_ids));
+            
+            $redirect_to = add_query_arg('col_lms_tokens_revoked', $deleted, $redirect_to);
+        }
+        
+        return $redirect_to;
+    }
+    
+    /**
      * Afficher les notices
      */
     private function display_notices() {
+        // Notice pour tokens révoqués
+        if (isset($_GET['col_lms_tokens_revoked'])) {
+            $count = intval($_GET['col_lms_tokens_revoked']);
+            echo '<div class="notice notice-success is-dismissible">';
+            echo '<p>' . sprintf(__('%d tokens ont été révoqués.', 'col-lms-offline-api'), $count) . '</p>';
+            echo '</div>';
+        }
+        
         // Vérifier HTTPS
         if (!is_ssl() && !defined('COL_LMS_ALLOW_HTTP')) {
             ?>
@@ -684,7 +1255,53 @@ class COL_LMS_Admin {
             <?php
         }
     }
+    
+    /**
+     * Sanitizer pour les niveaux d'adhésion
+     */
+    public function sanitize_membership_levels($levels) {
+        if (!is_array($levels)) {
+            return array();
+        }
+        return array_map('absint', $levels);
+    }
+    
+    /**
+     * Sanitizer pour la liste d'IP
+     */
+    public function sanitize_ip_list($ips) {
+        if (is_string($ips)) {
+            $ips = explode("\n", $ips);
+        }
+        
+        if (!is_array($ips)) {
+            return array();
+        }
+        
+        $sanitized = array();
+        foreach ($ips as $ip) {
+            $ip = trim($ip);
+            if (!empty($ip) && (filter_var($ip, FILTER_VALIDATE_IP) || strpos($ip, '/') !== false)) {
+                $sanitized[] = $ip;
+            }
+        }
+        
+        return $sanitized;
+    }
+    
+    /**
+     * Sanitizer pour les types de fichiers
+     */
+    public function sanitize_file_types($types) {
+        if (!is_array($types)) {
+            return array();
+        }
+        
+        return array_map('sanitize_text_field', $types);
+    }
 }
 
-// Initialiser l'admin
-new COL_LMS_Admin();
+// Initialiser l'admin seulement si on est en contexte admin
+if (is_admin()) {
+    new COL_LMS_Admin();
+}
