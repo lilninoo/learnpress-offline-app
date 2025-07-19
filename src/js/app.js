@@ -59,6 +59,39 @@ async function checkAuthentication() {
     }
 }
 
+
+// Après la connexion réussie, vérifier périodiquement l'abonnement
+async function checkMembershipStatus() {
+    if (!AppState.isAuthenticated) return;
+    
+    const result = await window.electronAPI.api.verifySubscription();
+    
+    if (!result.isActive) {
+        // Afficher une bannière d'avertissement
+        showMembershipWarning(result.subscription);
+        
+        // Limiter l'accès aux fonctionnalités
+        disablePremiumFeatures();
+    }
+}
+
+function showMembershipWarning(subscription) {
+    const banner = document.createElement('div');
+    banner.className = 'membership-warning-banner';
+    banner.innerHTML = `
+        <div class="warning-content">
+            <span>⚠️ Votre abonnement ${subscription.level_name || ''} a expiré</span>
+            <button onclick="window.electronAPI.openExternal('${AppState.apiUrl}/membership-account/')">
+                Renouveler
+            </button>
+        </div>
+    `;
+    document.body.insertBefore(banner, document.body.firstChild);
+}
+
+// Vérifier toutes les heures
+setInterval(checkMembershipStatus, 60 * 60 * 1000);
+
 // Initialiser les gestionnaires d'événements
 function initializeEventHandlers() {
     // Menu toggle (mobile)
