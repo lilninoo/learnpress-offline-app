@@ -1,358 +1,319 @@
 // auth.test.js - Tests pour le module d'authentification
-
 const { expect } = require('chai');
 const sinon = require('sinon');
-const { BrowserWindow } = require('electron');
+const path = require('path');
+const { app, BrowserWindow } = require('electron');
 
-// Mock des APIs Electron
-const mockElectronAPI = {
-    store: {
-        get: sinon.stub(),
-        set: sinon.stub()
-    },
-    api: {
-        login: sinon.stub(),
-        logout: sinon.stub(),
-        verifySubscription: sinon.stub()
-    }
-};
-
-// Mock du DOM
-const { JSDOM } = require('jsdom');
-const dom = new JSDOM(`
-    <!DOCTYPE html>
-    <html>
-    <body>
-        <form id="login-form">
-            <input id="api-url" value="https://test.com">
-            <input id="username" value="testuser">
-            <input id="password" value="testpass">
-            <input id="remember-me" type="checkbox">
-            <button id="login-btn">
-                <span class="btn-text">Login</span>
-                <span class="btn-loader hidden">Loading...</span>
-            </button>
-        </form>
-        <div id="login-error" class="hidden"></div>
-    </body>
-    </html>
-`);
-
-global.window = dom.window;
-global.document = dom.window.document;
-global.window.electronAPI = mockElectronAPI;
-
-// Utilitaires globaux
-global.Utils = {
-    isValidUrl: (url) => {
-        try {
-            new URL(url);
-            return true;
-        } catch {
-            return false;
-        }
-    }
-};
-
-global.Logger = {
-    log: sinon.stub(),
-    error: sinon.stub()
-};
-
-global.AppState = {
-    currentUser: null,
-    isAuthenticated: false
-};
-
-// Fonctions globales mockées
-global.showDashboard = sinon.stub();
-global.showError = sinon.stub();
-global.showInfo = sinon.stub();
-
+// Tests unitaires pour l'authentification
 describe('Module d\'authentification', () => {
+    let mockStore, mockApiClient;
     
     beforeEach(() => {
-        // Réinitialiser les stubs
-        sinon.reset();
+        // Mock du store
+        mockStore = {
+            get: sinon.stub(),
+            set: sinon.stub(),
+            delete: sinon.stub(),
+            clear: sinon.stub()
+        };
         
-        // État initial
-        AppState.currentUser = null;
-        AppState.isAuthenticated = false;
+        // Mock de l'API client
+        mockApiClient = {
+            login: sinon.stub(),
+            logout: sinon.stub(),
+            refreshAccessToken: sinon.stub(),
+            verifySubscription: sinon.stub()
+        };
     });
     
-    describe('Formulaire de connexion', () => {
+    afterEach(() => {
+        sinon.restore();
+    });
+    
+    describe('API Client - Authentification', () => {
+        const LearnPressAPIClient = require('../lib/api-client');
+        let client;
         
-        it('devrait valider les champs requis', (done) => {
-            // Vider les champs
-            document.getElementById('api-url').value = '';
-            document.getElementById('username').value = '';
-            document.getElementById('password').value = '';
-            
-            // Simuler la soumission
-            const form = document.getElementById('login-form');
-            const event = new dom.window.Event('submit', { bubbles: true, cancelable: true });
-            
-            form.addEventListener('submit', (e) => {
-                e.preventDefault();
-                
-                // Vérifier que l'erreur est affichée
-                const errorDiv = document.getElementById('login-error');
-                expect(errorDiv.textContent).to.equal('Veuillez remplir tous les champs');
-                expect(errorDiv.classList.contains('hidden')).to.be.false;
-                
-                done();
-            });
-            
-            form.dispatchEvent(event);
+        beforeEach(() => {
+            client = new LearnPressAPIClient('https://test.com', 'test-device-id');
         });
         
-        it('devrait valider l\'URL', (done) => {
-            // URL invalide
-            document.getElementById('api-url').value = 'invalid-url';
-            document.getElementById('username').value = 'user';
-            document.getElementById('password').value = 'pass';
-            
-            const form = document.getElementById('login-form');
-            const event = new dom.window.Event('submit', { bubbles: true, cancelable: true });
-            
-            form.addEventListener('submit', (e) => {
-                e.preventDefault();
-                
-                const errorDiv = document.getElementById('login-error');
-                expect(errorDiv.textContent).to.include('URL invalide');
-                
-                done();
-            });
-            
-            form.dispatchEvent(event);
-        });
-        
-        it('devrait se connecter avec succès', async () => {
-            // Configuration des valeurs
-            document.getElementById('api-url').value = 'https://test.com';
-            document.getElementById('username').value = 'testuser';
-            document.getElementById('password').value = 'testpass';
-            document.getElementById('remember-me').checked = true;
-            
-            // Mock de la réponse API
-            mockElectronAPI.api.login.resolves({
-                success: true,
-                user: {
-                    id: 1,
-                    username: 'testuser',
-                    email: 'test@example.com'
+        it('devrait gérer une connexion réussie', async () => {
+            // Mock de la réponse axios
+            const mockResponse = {
+                data: {
+                    token: 'test-token',
+                    refresh_token: 'test-refresh-token',
+                    expires_in: 3600,
+                    user: {
+                        id: 1,
+                        username: 'testuser',
+                        email: 'test@example.com',
+                        membership: {
+                            level_id: 1,
+                            level_name: 'Premium',
+                            expires_at: '2024-12-31'
+                        }
+                    }
                 }
-            });
+            };
             
-            // Simuler la soumission
-            const form = document.getElementById('login-form');
-            const submitHandler = require('../src/js/auth.js').submitHandler;
+            sinon.stub(client.client, 'post').resolves(mockResponse);
             
-            await submitHandler({
-                preventDefault: () => {},
-                target: form
-            });
+            const result = await client.login('testuser', 'password123');
             
-            // Vérifications
-            expect(mockElectronAPI.api.login.calledOnce).to.be.true;
-            expect(mockElectronAPI.api.login.calledWith(
-                'https://test.com',
-                'testuser',
-                'testpass'
-            )).to.be.true;
-            
-            expect(mockElectronAPI.store.set.calledWith('apiUrl', 'https://test.com')).to.be.true;
-            expect(mockElectronAPI.store.set.calledWith('username', 'testuser')).to.be.true;
-            expect(mockElectronAPI.store.set.calledWith('userId', 1)).to.be.true;
-            
-            expect(AppState.isAuthenticated).to.be.true;
-            expect(AppState.currentUser).to.deep.equal({
-                id: 1,
-                username: 'testuser',
-                email: 'test@example.com'
-            });
-            
-            expect(global.showDashboard.calledOnce).to.be.true;
+            expect(result.success).to.be.true;
+            expect(result.user).to.deep.equal(mockResponse.data.user);
+            expect(result.membership).to.deep.equal(mockResponse.data.user.membership);
+            expect(client.token).to.equal('test-token');
+            expect(client.refreshToken).to.equal('test-refresh-token');
         });
         
-        it('devrait gérer les erreurs de connexion', async () => {
-            // Mock d'une erreur
-            mockElectronAPI.api.login.resolves({
-                success: false,
-                error: 'Identifiants incorrects'
-            });
+        it('devrait gérer l\'erreur d\'abonnement Paid Memberships Pro', async () => {
+            const errorResponse = {
+                response: {
+                    status: 403,
+                    data: {
+                        code: 'no_membership',
+                        message: 'Vous devez avoir un abonnement actif pour utiliser l\'application'
+                    }
+                }
+            };
             
-            const form = document.getElementById('login-form');
-            const submitHandler = require('../src/js/auth.js').submitHandler;
+            sinon.stub(client.client, 'post').rejects(errorResponse);
             
-            await submitHandler({
-                preventDefault: () => {},
-                target: form
-            });
+            const result = await client.login('testuser', 'password123');
             
-            // Vérifications
-            const errorDiv = document.getElementById('login-error');
-            expect(errorDiv.textContent).to.equal('Identifiants incorrects');
-            expect(errorDiv.classList.contains('hidden')).to.be.false;
-            
-            expect(AppState.isAuthenticated).to.be.false;
-            expect(global.showDashboard.called).to.be.false;
+            expect(result.success).to.be.false;
+            expect(result.requiresMembership).to.be.true;
+            expect(result.error).to.include('abonnement actif');
         });
         
-        it('devrait sauvegarder les credentials si "Se souvenir" est coché', async () => {
-            document.getElementById('remember-me').checked = true;
+        it('devrait rafraîchir le token avec succès', async () => {
+            client.refreshToken = 'old-refresh-token';
             
-            mockElectronAPI.api.login.resolves({
-                success: true,
-                user: { id: 1 }
-            });
+            const mockResponse = {
+                data: {
+                    token: 'new-token',
+                    expires_in: 3600
+                }
+            };
             
-            const form = document.getElementById('login-form');
-            const submitHandler = require('../src/js/auth.js').submitHandler;
+            sinon.stub(client.client, 'post').resolves(mockResponse);
             
-            await submitHandler({
-                preventDefault: () => {},
-                target: form
-            });
+            const result = await client.refreshAccessToken();
             
-            expect(mockElectronAPI.store.set.calledWith('savedApiUrl', 'https://test.com')).to.be.true;
-            expect(mockElectronAPI.store.set.calledWith('savedUsername', 'testuser')).to.be.true;
-        });
-    });
-    
-    describe('Gestion du token', () => {
-        
-        it('devrait rafraîchir le token automatiquement', async () => {
-            // Mock du rafraîchissement réussi
-            mockElectronAPI.api.refreshToken.resolves({
-                success: true,
-                token: 'new-token'
-            });
-            
-            AppState.isAuthenticated = true;
-            
-            const { setupTokenRefresh } = require('../src/js/auth.js');
-            const clock = sinon.useFakeTimers();
-            
-            setupTokenRefresh();
-            
-            // Avancer le temps de 31 minutes
-            clock.tick(31 * 60 * 1000);
-            
-            await Promise.resolve(); // Attendre les promesses
-            
-            expect(mockElectronAPI.api.refreshToken.calledOnce).to.be.true;
-            expect(Logger.log.calledWith('Token rafraîchi avec succès')).to.be.true;
-            
-            clock.restore();
+            expect(result.success).to.be.true;
+            expect(client.token).to.equal('new-token');
         });
         
-        it('devrait gérer l\'expiration du token', async () => {
-            mockElectronAPI.api.refreshToken.rejects(new Error('Token expiré'));
+        it('devrait vérifier l\'abonnement actif', async () => {
+            const mockResponse = {
+                data: {
+                    is_active: true,
+                    subscription: {
+                        status: 'active',
+                        level_id: 1,
+                        level_name: 'Premium',
+                        expires_at: '2024-12-31'
+                    }
+                }
+            };
             
-            const { handleAuthError } = require('../src/js/auth.js');
-            await handleAuthError();
+            sinon.stub(client.client, 'get').resolves(mockResponse);
             
-            expect(mockElectronAPI.store.set.calledWith('token', '')).to.be.true;
-            expect(mockElectronAPI.store.set.calledWith('refreshToken', '')).to.be.true;
-            expect(AppState.isAuthenticated).to.be.false;
-            expect(AppState.currentUser).to.be.null;
+            const result = await client.verifySubscription();
+            
+            expect(result.success).to.be.true;
+            expect(result.isActive).to.be.true;
+            expect(result.subscription.level_name).to.equal('Premium');
         });
-    });
-    
-    describe('Vérification de l\'abonnement', () => {
         
-        it('devrait afficher un avertissement si l\'abonnement est expiré', async () => {
-            mockElectronAPI.api.verifySubscription.resolves({
-                success: true,
-                isActive: false
-            });
+        it('devrait détecter un abonnement expiré', async () => {
+            const mockResponse = {
+                data: {
+                    is_active: false,
+                    subscription: {
+                        status: 'expired',
+                        level_id: 1,
+                        level_name: 'Premium',
+                        expires_at: '2023-01-01'
+                    }
+                }
+            };
             
-            AppState.isAuthenticated = true;
+            sinon.stub(client.client, 'get').resolves(mockResponse);
             
-            const { checkSubscriptionStatus } = require('../src/js/auth.js');
-            const result = await checkSubscriptionStatus();
+            const result = await client.verifySubscription();
             
+            expect(result.success).to.be.true;
             expect(result.isActive).to.be.false;
-            expect(global.showMessage.calledWith(
-                'Votre abonnement a expiré. Certaines fonctionnalités peuvent être limitées.',
-                'warning'
-            )).to.be.true;
+            expect(result.subscription.status).to.equal('expired');
+        });
+    });
+    
+    describe('IPC Handlers - Authentification', () => {
+        const { setupIpcHandlers } = require('../lib/ipc-handlers');
+        let ipcMain, context;
+        
+        beforeEach(() => {
+            ipcMain = {
+                handle: sinon.stub()
+            };
+            
+            context = {
+                store: mockStore,
+                deviceId: 'test-device-id',
+                app: { getPath: sinon.stub().returns('/test/path') },
+                dialog: {},
+                mainWindow: { webContents: { send: sinon.stub() } },
+                getApiClient: sinon.stub().returns(mockApiClient),
+                setApiClient: sinon.stub(),
+                getDatabase: sinon.stub()
+            };
+            
+            setupIpcHandlers(ipcMain, context);
+        });
+        
+        it('devrait enregistrer le handler api-login', () => {
+            const loginHandler = ipcMain.handle.args.find(
+                args => args[0] === 'api-login'
+            );
+            expect(loginHandler).to.exist;
+        });
+        
+        it('devrait enregistrer le handler api-verify-subscription', () => {
+            const verifyHandler = ipcMain.handle.args.find(
+                args => args[0] === 'api-verify-subscription'
+            );
+            expect(verifyHandler).to.exist;
+        });
+    });
+    
+    describe('Base de données sécurisée', () => {
+        const SecureDatabase = require('../lib/database');
+        let db, tempDbPath;
+        
+        beforeEach(() => {
+            tempDbPath = path.join(__dirname, 'temp-test.db');
+            db = new SecureDatabase(tempDbPath, 'test-encryption-key');
+        });
+        
+        afterEach(() => {
+            if (db) {
+                db.close();
+            }
+            // Nettoyer le fichier de test
+            const fs = require('fs');
+            if (fs.existsSync(tempDbPath)) {
+                fs.unlinkSync(tempDbPath);
+            }
+        });
+        
+        it('devrait créer les tables nécessaires', () => {
+            const tables = db.db.prepare(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).all();
+            
+            const tableNames = tables.map(t => t.name);
+            expect(tableNames).to.include('courses');
+            expect(tableNames).to.include('sections');
+            expect(tableNames).to.include('lessons');
+            expect(tableNames).to.include('media');
+            expect(tableNames).to.include('quizzes');
+            expect(tableNames).to.include('sync_log');
+        });
+        
+        it('devrait chiffrer et déchiffrer les données des cours', () => {
+            const courseData = {
+                course_id: 1,
+                title: 'Test Course',
+                description: 'Description secrète',
+                thumbnail: 'https://example.com/image.jpg',
+                instructor_name: 'John Doe',
+                instructor_id: 1,
+                lessons_count: 10,
+                sections_count: 3,
+                version: 1
+            };
+            
+            db.saveCourse(courseData);
+            const retrieved = db.getCourse(1);
+            
+            expect(retrieved.title).to.equal(courseData.title);
+            expect(retrieved.description).to.equal(courseData.description);
+            expect(retrieved.thumbnail).to.equal(courseData.thumbnail);
+            
+            // Vérifier que les données sont bien chiffrées dans la DB
+            const raw = db.db.prepare('SELECT * FROM courses WHERE course_id = ?').get(1);
+            expect(raw.description).to.not.equal(courseData.description);
+            expect(raw.thumbnail_encrypted).to.not.equal(courseData.thumbnail);
+        });
+        
+        it('devrait gérer la synchronisation de la progression', () => {
+            // Créer une leçon
+            db.saveLesson({
+                lesson_id: 1,
+                section_id: 1,
+                title: 'Test Lesson',
+                type: 'video',
+                content: 'Contenu de la leçon'
+            });
+            
+            // Mettre à jour la progression
+            db.updateLessonProgress(1, 50, false);
+            
+            // Vérifier la file de synchronisation
+            const unsyncedItems = db.getUnsyncedItems();
+            expect(unsyncedItems).to.have.length(1);
+            expect(unsyncedItems[0].entity_type).to.equal('lesson');
+            expect(unsyncedItems[0].action).to.equal('progress');
+            expect(unsyncedItems[0].data.progress).to.equal(50);
         });
     });
 });
 
 // Tests d'intégration
-describe('Tests d\'intégration - Authentification', () => {
-    
-    let app;
-    let window;
-    
-    before(async () => {
-        // Démarrer l'application Electron
-        const { app: electronApp } = require('electron');
-        app = electronApp;
+describe('Tests d\'intégration - Authentification avec Paid Memberships Pro', () => {
+    it('devrait vérifier l\'abonnement après connexion', async () => {
+        const LearnPressAPIClient = require('../lib/api-client');
+        const client = new LearnPressAPIClient('https://test.com', 'test-device');
         
-        await app.whenReady();
-    });
-    
-    beforeEach(async () => {
-        // Créer une nouvelle fenêtre
-        window = new BrowserWindow({
-            show: false,
-            webPreferences: {
-                nodeIntegration: false,
-                contextIsolation: true,
-                preload: path.join(__dirname, '../preload.js')
+        // Mock de la connexion réussie
+        sinon.stub(client.client, 'post').withArgs('/auth/login').resolves({
+            data: {
+                token: 'test-token',
+                refresh_token: 'refresh-token',
+                user: {
+                    id: 1,
+                    membership: {
+                        level_id: 2,
+                        level_name: 'Gold',
+                        expires_at: '2024-12-31'
+                    }
+                }
             }
         });
         
-        await window.loadFile('src/index.html');
-    });
-    
-    afterEach(() => {
-        if (window && !window.isDestroyed()) {
-            window.close();
-        }
-    });
-    
-    after(() => {
-        app.quit();
-    });
-    
-    it('devrait charger la page de connexion au démarrage', async () => {
-        const title = await window.webContents.executeJavaScript('document.title');
-        expect(title).to.equal('LearnPress Offline');
+        // Mock de la vérification d'abonnement
+        sinon.stub(client.client, 'get').withArgs('/auth/verify').resolves({
+            data: {
+                is_active: true,
+                subscription: {
+                    status: 'active',
+                    level_name: 'Gold',
+                    expires_at: '2024-12-31'
+                }
+            }
+        });
         
-        const loginPageVisible = await window.webContents.executeJavaScript(
-            'document.getElementById("login-page").classList.contains("active")'
-        );
-        expect(loginPageVisible).to.be.true;
-    });
-    
-    it('devrait naviguer vers le dashboard après connexion', async () => {
-        // Simuler une connexion réussie
-        await window.webContents.executeJavaScript(`
-            window.electronAPI.api.login = () => Promise.resolve({
-                success: true,
-                user: { id: 1, username: 'test' }
-            });
-        `);
+        // Se connecter
+        const loginResult = await client.login('user', 'pass');
+        expect(loginResult.success).to.be.true;
         
-        // Remplir et soumettre le formulaire
-        await window.webContents.executeJavaScript(`
-            document.getElementById('api-url').value = 'https://teachmemore.fr';
-            document.getElementById('username').value = 'test';
-            document.getElementById('password').value = 'test';
-            document.getElementById('login-form').dispatchEvent(new Event('submit'));
-        `);
-        
-        // Attendre la navigation
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        const dashboardVisible = await window.webContents.executeJavaScript(
-            '!document.getElementById("dashboard-page").classList.contains("hidden")'
-        );
-        expect(dashboardVisible).to.be.true;
+        // Vérifier l'abonnement
+        const verifyResult = await client.verifySubscription();
+        expect(verifyResult.isActive).to.be.true;
+        expect(verifyResult.subscription.level_name).to.equal('Gold');
     });
 });
