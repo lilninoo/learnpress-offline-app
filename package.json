@@ -44,7 +44,12 @@
     "dev-setup": "npm run dev-utils dev-setup",
     "release": "electron-builder --publish always",
     "dist": "electron-builder",
-    "pack": "electron-builder --dir"
+    "pack": "electron-builder --dir",
+    "build-win": "electron-builder --win --x64",
+    "build-mac": "electron-builder --mac --universal",
+    "build-linux": "electron-builder --linux --x64",
+    "postinstall": "electron-builder install-app-deps && npm run rebuild-sqlite3",
+    "rebuild-sqlite3": "electron-rebuild -f -w better-sqlite3"
   },
   "engines": {
     "node": ">=16.0.0",
