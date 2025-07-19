@@ -627,6 +627,47 @@ function updateProgressDisplay(data) {
     console.log('Progression:', data);
 }
 
+// Implémenter la pagination virtuelle
+let coursesPage = 1;
+const coursesPerPage = 20;
+
+async function loadMoreCourses() {
+    const loader = document.createElement('div');
+    loader.className = 'loading-more';
+    loader.innerHTML = '<div class="spinner-small"></div>';
+    document.getElementById('courses-grid').appendChild(loader);
+    
+    try {
+        const courses = await window.electronAPI.db.getAllCourses(coursesPage, coursesPerPage);
+        
+        if (courses.length > 0) {
+            courses.forEach(course => {
+                const card = createCourseCard(course);
+                document.getElementById('courses-grid').insertBefore(card, loader);
+            });
+            coursesPage++;
+        }
+        
+        loader.remove();
+        
+        if (courses.length < coursesPerPage) {
+            // Plus de cours à charger
+            window.removeEventListener('scroll', handleInfiniteScroll);
+        }
+    } catch (error) {
+        console.error('Erreur lors du chargement des cours:', error);
+        loader.remove();
+    }
+}
+
+// Scroll infini
+function handleInfiniteScroll() {
+    const { scrollTop, scrollHeight, clientHeight } = document.documentElement;
+    if (scrollTop + clientHeight >= scrollHeight - 100) {
+        loadMoreCourses();
+    }
+}
+
 // Export des fonctions globales pour onclick dans le HTML
 window.openCourse = openCourse;
 window.deleteCourse = deleteCourse;
