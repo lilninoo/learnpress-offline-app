@@ -47,9 +47,7 @@
     "pack": "electron-builder --dir",
     "build-win": "electron-builder --win --x64",
     "build-mac": "electron-builder --mac --universal",
-    "build-linux": "electron-builder --linux --x64",
-    "postinstall": "electron-builder install-app-deps && npm run rebuild-sqlite3",
-    "rebuild-sqlite3": "electron-rebuild -f -w better-sqlite3"
+    "build-linux": "electron-builder --linux --x64"
   },
   "engines": {
     "node": ">=16.0.0",
@@ -66,18 +64,18 @@
     "jsdom": "^23.0.0",
     "@electron/notarize": "^2.1.0",
     "electron-devtools-installer": "^3.2.0",
-    "spectron": "^19.0.0"
+    "spectron": "^19.0.0",
+    "electron-rebuild": "^3.2.9"
   },
   "dependencies": {
     "axios": "^1.5.0",
-    "better-sqlite3": "^9.0.0",
+    "sqlite3": "^5.1.6",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.1.4",
     "electron-log": "^5.0.0",
     "node-machine-id": "^1.1.12",
     "electron-context-menu": "^3.6.1",
     "form-data": "^4.0.0"
-
   },
   "build": {
     "appId": "com.teachmemore.learnpress-offline",
@@ -131,10 +129,7 @@
         }
       ],
       "type": "distribution",
-      "darkModeSupport": true,
-      "notarize": {
-        "teamId": "${env.APPLE_TEAM_ID}"
-      }
+      "darkModeSupport": true
     },
     "dmg": {
       "contents": [
@@ -162,13 +157,10 @@
         }
       ],
       "icon": "build/icon.ico",
-      "certificateFile": "${env.WINDOWS_CERTIFICATE_FILE}",
-      "certificatePassword": "${env.WINDOWS_CERTIFICATE_PASSWORD}",
-      "verifyUpdateCodeSignature": true,
       "publisherName": "Armel NGANDO",
       "requestedExecutionLevel": "requireAdministrator",
-      "signAndEditExecutable": true,
-      "signDlls": true
+      "signAndEditExecutable": false,
+      "signDlls": false
     },
     "nsis": {
       "oneClick": false,
@@ -180,9 +172,6 @@
       "createStartMenuShortcut": true,
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
-      "installerHeader": "build/installerHeader.bmp",
-      "installerSidebar": "build/installerSidebar.bmp",
-      "uninstallerSidebar": "build/installerSidebar.bmp",
       "license": "LICENSE.md"
     },
     "linux": {
@@ -196,9 +185,6 @@
         },
         {
           "target": "rpm"
-        },
-        {
-          "target": "snap"
         }
       ],
       "icon": "build/icons/",
@@ -211,20 +197,6 @@
         "MimeType": "x-scheme-handler/learnpress"
       }
     },
-    "snap": {
-      "grade": "stable",
-      "confinement": "strict",
-      "summary": "LearnPress Offline Learning"
-    },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "votre-repo",
-        "repo": "learnpress-offline-app",
-        "releaseType": "release"
-      }
-    ],
-    "afterSign": "scripts/notarize.js",
     "protocols": [
       {
         "name": "LearnPress Protocol",
