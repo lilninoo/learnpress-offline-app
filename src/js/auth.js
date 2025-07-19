@@ -28,6 +28,21 @@ document.getElementById('login-form')?.addEventListener('submit', async (e) => {
     try {
         // Tenter la connexion via l'API exposée par le preload
         const result = await window.electronAPI.api.login(apiUrl, username, password);
+
+        // Par (pour gérer les erreurs d'abonnement)
+        const result = await window.electronAPI.api.login(apiUrl, username, password);
+        
+        if (!result.success && result.requiresMembership) {
+            showLoginError('Vous devez avoir un abonnement actif pour utiliser l\'application');
+            // Optionnel : Ajouter un lien vers la page d'abonnement
+            const subscribeLink = document.createElement('a');
+            subscribeLink.href = 'https://teachmemore.fr/nos-tarifs/';
+            subscribeLink.textContent = 'Souscrire à un abonnement';
+            subscribeLink.onclick = () => window.electronAPI.openExternal(`${apiUrl}/membership-account/membership-checkout/`);
+            document.getElementById('login-error').appendChild(subscribeLink);
+            return;
+        }
+                
         
         if (result.success) {
             // Sauvegarder les informations de connexion
