@@ -9,6 +9,8 @@ Body: {
 "password": "string",
 "device_id": "string"
 }
+
+##
 Response: {
 "token": "string",
 "refresh_token": "string",
