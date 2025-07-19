@@ -19,6 +19,8 @@
         initCharts();
         initRealTimeUpdates();
         initTooltips();
+        initFormValidation();
+        initTableFilters();
     });
     
     /**
@@ -39,13 +41,17 @@
             $(target).show();
             
             // Sauvegarder l'onglet actif
-            localStorage.setItem('col_lms_active_tab', target);
+            if (typeof(Storage) !== "undefined") {
+                localStorage.setItem('col_lms_active_tab', target);
+            }
         });
         
         // Restaurer l'onglet actif
-        const activeTab = localStorage.getItem('col_lms_active_tab');
-        if (activeTab && $(activeTab).length) {
-            $(`a[href="${activeTab}"]`).trigger('click');
+        if (typeof(Storage) !== "undefined") {
+            const activeTab = localStorage.getItem('col_lms_active_tab');
+            if (activeTab && $(activeTab).length) {
+                $(`a[href="${activeTab}"]`).trigger('click');
+            }
         }
     }
     
@@ -80,6 +86,11 @@
         $('#refresh-stats').on('click', function() {
             refreshDashboard();
         });
+        
+        // Filtres d'activité
+        $('#apply-filters').on('click', function() {
+            applyActivityFilters();
+        });
     }
     
     /**
@@ -91,13 +102,21 @@
             return;
         }
         
-        loadChartData();
+        // Attendre un peu que la page soit complètement chargée
+        setTimeout(function() {
+            loadChartData();
+        }, 1000);
     }
     
     /**
      * Charger les données des graphiques
      */
     function loadChartData() {
+        if (typeof col_lms_admin === 'undefined') {
+            console.error('Variables admin non disponibles');
+            return;
+        }
+        
         $.ajax({
             url: col_lms_admin.ajax_url,
             type: 'POST',
@@ -109,10 +128,13 @@
                 if (response.success) {
                     createApiActivityChart(response.data.api_activity);
                     createPopularCoursesChart(response.data.popular_courses);
+                } else {
+                    console.error('Erreur lors du chargement des statistiques:', response);
                 }
             },
-            error: function() {
-                console.error('Erreur lors du chargement des statistiques');
+            error: function(xhr, status, error) {
+                console.error('Erreur AJAX:', error);
+                showNotice('error', 'Erreur lors du chargement des statistiques');
             }
         });
     }
@@ -132,7 +154,7 @@
             return date.toLocaleDateString('fr-FR', { month: 'short', day: 'numeric' });
         });
         
-        const values = data.map(item => item.count);
+        const values = data.map(item => parseInt(item.count) || 0);
         
         if (charts.apiActivity) {
             charts.apiActivity.destroy();
@@ -188,7 +210,7 @@
             item.title ? truncateText(item.title, 30) : `Cours #${item.course_id}`
         );
         
-        const values = limitedData.map(item => item.downloads);
+        const values = limitedData.map(item => parseInt(item.downloads) || 0);
         
         if (charts.popularCourses) {
             charts.popularCourses.destroy();
@@ -250,7 +272,7 @@
         const originalText = button.text();
         
         button.prop('disabled', true)
-              .text('Test en cours...')
+              .text(col_lms_admin.strings.loading || 'Test en cours...')
               .addClass('updating-message');
         
         $.ajax({
@@ -264,11 +286,11 @@
                 if (response.success) {
                     showNotice('success', col_lms_admin.strings.test_success + ` (HTTP ${response.data.status_code})`);
                 } else {
-                    showNotice('error', col_lms_admin.strings.test_failed + ': ' + response.data.message);
+                    showNotice('error', col_lms_admin.strings.test_failed + ': ' + (response.data.message || 'Erreur inconnue'));
                 }
             },
-            error: function() {
-                showNotice('error', 'Erreur de connexion lors du test');
+            error: function(xhr, status, error) {
+                showNotice('error', 'Erreur de connexion lors du test: ' + error);
             },
             complete: function() {
                 button.prop('disabled', false)
@@ -322,34 +344,28 @@
      * Exporter les statistiques
      */
     function exportStats() {
-        const form = $('<form>', {
-            'method': 'POST',
-            'action': col_lms_admin.ajax_url
+        $.ajax({
+            url: col_lms_admin.ajax_url,
+            type: 'POST',
+            data: {
+                action: 'col_lms_export_stats',
+                nonce: col_lms_admin.nonce,
+                format: 'csv'
+            },
+            success: function(response) {
+                if (response.success) {
+                    showNotice('success', response.data.message);
+                    if (response.data.download_url) {
+                        window.open(response.data.download_url, '_blank');
+                    }
+                } else {
+                    showNotice('error', 'Erreur lors de l\'export');
+                }
+            },
+            error: function() {
+                showNotice('error', 'Erreur de connexion');
+            }
         });
-        
-        form.append($('<input>', {
-            'type': 'hidden',
-            'name': 'action',
-            'value': 'col_lms_export_stats'
-        }));
-        
-        form.append($('<input>', {
-            'type': 'hidden',
-            'name': 'nonce',
-            'value': col_lms_admin.nonce
-        }));
-        
-        form.append($('<input>', {
-            'type': 'hidden',
-            'name': 'format',
-            'value': 'csv'
-        }));
-        
-        $('body').append(form);
-        form.submit();
-        form.remove();
-        
-        showNotice('info', 'Export en cours...');
     }
     
     /**
@@ -402,6 +418,11 @@
         });
         
         showNotice('success', 'Tableau de bord mis à jour');
+        
+        // Recharger la page après 2 secondes pour actualiser les données
+        setTimeout(function() {
+            window.location.reload();
+        }, 2000);
     }
     
     /**
@@ -478,6 +499,9 @@
      * Afficher une notice
      */
     function showNotice(type, message) {
+        // Supprimer les anciennes notices temporaires
+        $('.col-lms-notice-temp').remove();
+        
         const notice = $(`
             <div class="notice notice-${type} is-dismissible col-lms-notice-temp">
                 <p>${message}</p>
@@ -577,17 +601,52 @@
         });
     }
     
-    // Initialiser les fonctionnalités supplémentaires
-    $(document).ready(function() {
-        initFormValidation();
-        initTableFilters();
+    /**
+     * Appliquer les filtres d'activité
+     */
+    function applyActivityFilters() {
+        const actionFilter = $('#filter-action').val();
+        const userFilter = $('#filter-user').val().toLowerCase();
+        
+        $('.activity-table tbody tr').each(function() {
+            const row = $(this);
+            const action = row.find('td:nth-child(2)').text().trim();
+            const user = row.find('td:nth-child(3)').text().toLowerCase();
+            
+            let showRow = true;
+            
+            if (actionFilter && action !== actionFilter) {
+                showRow = false;
+            }
+            
+            if (userFilter && !user.includes(userFilter)) {
+                showRow = false;
+            }
+            
+            row.toggle(showRow);
+        });
+    }
+    
+    /**
+     * Gérer les erreurs globales
+     */
+    window.addEventListener('error', function(e) {
+        console.error('Erreur JavaScript:', e.error);
     });
     
-    // Exposer certaines fonctions globalement
+    // Exposer certaines fonctions globalement pour les tests
     window.colLmsAdmin = {
         refreshDashboard: refreshDashboard,
         showNotice: showNotice,
-        loadChartData: loadChartData
+        loadChartData: loadChartData,
+        testApi: function() { testApi($('#test-api')); }
     };
     
 })(jQuery);
+
+// Fonction globale pour charger les graphiques (compatible avec l'ancien code)
+function loadChartData() {
+    if (window.colLmsAdmin && window.colLmsAdmin.loadChartData) {
+        window.colLmsAdmin.loadChartData();
+    }
+}
