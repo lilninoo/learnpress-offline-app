@@ -7,6 +7,8 @@ const log = require('electron-log');
 const { machineIdSync } = require('node-machine-id');
 const contextMenu = require('electron-context-menu');
 const crypto = require('crypto');
+const errorHandler = require('./lib/error-handler');
+const config = require('./config');
 
 // Import des modules personnalisés
 const LearnPressAPIClient = require('./lib/api-client');
@@ -16,6 +18,338 @@ const { setupIpcHandlers } = require('./lib/ipc-handlers');
 // Configuration du logging
 log.transports.file.level = 'info';
 autoUpdater.logger = log;
+
+
+// ==================== GESTION DES ERREURS GLOBALES ====================
+
+// Capturer les erreurs non gérées
+process.on('uncaughtException', async (error) => {
+    console.error('Uncaught Exception:', error);
+    await errorHandler.handleError(error, { 
+        type: 'uncaughtException',
+        fatal: true 
+    });
+    
+    // Fermer proprement
+    if (database) {
+        database.close();
+    }
+    
+    app.exit(1);
+});
+
+process.on('unhandledRejection', async (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    await errorHandler.handleError(new Error(reason), { 
+        type: 'unhandledRejection',
+        promise 
+    });
+});
+
+// ==================== GESTION DES ABONNEMENTS ====================
+
+// Vérifier périodiquement le statut de l'abonnement
+let membershipCheckInterval;
+
+function startMembershipCheck() {
+    // Vérifier immédiatement
+    checkMembershipStatus();
+    
+    // Puis périodiquement
+    membershipCheckInterval = setInterval(async () => {
+        await checkMembershipStatus();
+    }, config.membership.checkInterval);
+}
+
+function stopMembershipCheck() {
+    if (membershipCheckInterval) {
+        clearInterval(membershipCheckInterval);
+        membershipCheckInterval = null;
+    }
+}
+
+async function checkMembershipStatus() {
+    if (!apiClient) return;
+    
+    try {
+        const result = await apiClient.verifySubscription();
+        
+        if (!result.success || !result.isActive) {
+            // Envoyer l'événement au renderer
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('membership-status-changed', {
+                    isActive: false,
+                    subscription: result.subscription
+                });
+            }
+            
+            // Appliquer les restrictions
+            applyMembershipRestrictions(result.subscription);
+        } else {
+            // Abonnement actif - lever les restrictions
+            removeMembershipRestrictions();
+            
+            // Vérifier si l'abonnement expire bientôt
+            if (result.subscription.expires_at) {
+                const expiresAt = new Date(result.subscription.expires_at);
+                const daysUntilExpiry = Math.floor((expiresAt - new Date()) / (1000 * 60 * 60 * 24));
+                
+                if (daysUntilExpiry <= config.membership.warningDays && daysUntilExpiry > 0) {
+                    if (mainWindow && !mainWindow.isDestroyed()) {
+                        mainWindow.webContents.send('membership-expiring-soon', {
+                            daysLeft: daysUntilExpiry,
+                            expiresAt: result.subscription.expires_at
+                        });
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Erreur lors de la vérification de l\'abonnement:', error);
+        // Ne pas bloquer l'application si la vérification échoue
+    }
+}
+
+function applyMembershipRestrictions(subscription) {
+    // Implémenter les restrictions selon le niveau
+    const restrictions = {
+        canDownloadPremium: false,
+        canSync: false,
+        maxCourses: config.membership.freeTierLimits.maxCourses,
+        maxDownloadSize: config.membership.freeTierLimits.maxDownloadSize
+    };
+    
+    // Stocker les restrictions
+    store.set('membershipRestrictions', restrictions);
+    
+    // Informer le renderer
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('apply-restrictions', restrictions);
+    }
+}
+
+function removeMembershipRestrictions() {
+    store.delete('membershipRestrictions');
+    
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('remove-restrictions');
+    }
+}
+
+// ==================== IPC HANDLERS ADDITIONNELS ====================
+
+// Ajouter ces handlers dans setupIpcHandlers
+ipcMain.handle('get-membership-restrictions', () => {
+    return store.get('membershipRestrictions') || null;
+});
+
+ipcMain.handle('check-feature-access', (event, feature) => {
+    const restrictions = store.get('membershipRestrictions');
+    if (!restrictions) return true;
+    
+    return config.isFeatureEnabled(feature, { is_active: !restrictions });
+});
+
+ipcMain.handle('get-error-logs', () => {
+    return errorHandler.getRecentErrors();
+});
+
+ipcMain.handle('report-error', async (event, error) => {
+    await errorHandler.handleError(error, { source: 'renderer' });
+});
+
+
+// ==================== NETTOYAGE ET MAINTENANCE ====================
+
+// Nettoyer périodiquement
+let maintenanceInterval;
+
+function startMaintenance() {
+    maintenanceInterval = setInterval(async () => {
+        try {
+            // Nettoyer la base de données
+            if (database) {
+                await database.cleanupExpiredData();
+                
+                // Vérifier l'espace disque
+                const stats = await database.getStats();
+                const diskSpace = await checkDiskSpace();
+                
+                if (diskSpace.free < 1024 * 1024 * 1024) { // Moins de 1GB
+                    if (mainWindow && !mainWindow.isDestroyed()) {
+                        mainWindow.webContents.send('low-disk-space', {
+                            free: diskSpace.free,
+                            used: diskSpace.used
+                        });
+                    }
+                }
+            }
+            
+            // Nettoyer les logs anciens
+            cleanOldLogs();
+            
+        } catch (error) {
+            console.error('Erreur lors de la maintenance:', error);
+        }
+    }, config.storage.cleanupInterval);
+}
+
+function stopMaintenance() {
+    if (maintenanceInterval) {
+        clearInterval(maintenanceInterval);
+        maintenanceInterval = null;
+    }
+}
+
+async function checkDiskSpace() {
+    const { exec } = require('child_process');
+    const util = require('util');
+    const execPromise = util.promisify(exec);
+    
+    try {
+        if (process.platform === 'win32') {
+            const { stdout } = await execPromise('wmic logicaldisk get size,freespace,caption');
+            // Parser le résultat Windows
+            // ...
+        } else {
+            const { stdout } = await execPromise('df -k .');
+            // Parser le résultat Unix
+            // ...
+        }
+    } catch (error) {
+        console.error('Erreur lors de la vérification de l\'espace disque:', error);
+        return { free: 0, used: 0, total: 0 };
+    }
+}
+
+function cleanOldLogs() {
+    const logsDir = path.join(app.getPath('userData'), 'logs');
+    const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 jours
+    
+    fs.readdir(logsDir, (err, files) => {
+        if (err) return;
+        
+        files.forEach(file => {
+            const filePath = path.join(logsDir, file);
+            fs.stat(filePath, (err, stats) => {
+                if (err) return;
+                
+                if (Date.now() - stats.mtime.getTime() > maxAge) {
+                    fs.unlink(filePath, (err) => {
+                        if (err) console.error('Erreur lors de la suppression du log:', err);
+                    });
+                }
+            });
+        });
+    });
+}
+
+// ==================== MODIFICATIONS DU CYCLE DE VIE ====================
+
+// Modifier app.whenReady()
+app.whenReady().then(async () => {
+    try {
+        // Valider la configuration
+        config.validate();
+        
+        // Initialiser la base de données
+        await initializeDatabase();
+        
+        // Créer les fenêtres
+        createSplashWindow();
+        createMainWindow();
+        createMenu();
+        
+        // Configurer les gestionnaires IPC avec les nouveaux handlers
+        setupIpcHandlers(ipcMain, {
+            store,
+            deviceId,
+            app,
+            dialog,
+            mainWindow,
+            getApiClient: () => apiClient,
+            setApiClient: (client) => { 
+                apiClient = client;
+                if (client) {
+                    startMembershipCheck();
+                } else {
+                    stopMembershipCheck();
+                }
+            },
+            getDatabase: () => database,
+            errorHandler,
+            config
+        });
+        
+        // Démarrer la maintenance
+        startMaintenance();
+        
+        // Vérifier les mises à jour
+        if (!isDev && config.updates.autoCheck) {
+            autoUpdater.checkForUpdatesAndNotify();
+        }
+        
+        // Gérer le deep linking
+        handleDeepLinking();
+        
+    } catch (error) {
+        log.error('Erreur lors de l\'initialisation:', error);
+        await errorHandler.handleError(error, { 
+            type: 'initialization',
+            fatal: true 
+        });
+        app.quit();
+    }
+});
+
+// Modifier app.on('window-all-closed')
+app.on('window-all-closed', () => {
+    // Arrêter les vérifications
+    stopMembershipCheck();
+    stopMaintenance();
+    
+    if (process.platform !== 'darwin') {
+        app.quit();
+    }
+});
+
+// ==================== DEEP LINKING ====================
+
+function handleDeepLinking() {
+    // Gérer le protocole learnpress://
+    app.setAsDefaultProtocolClient('learnpress');
+    
+    // Windows/Linux
+    const deeplinkingUrl = process.argv.find((arg) => arg.startsWith('learnpress://'));
+    if (deeplinkingUrl) {
+        handleDeepLink(deeplinkingUrl);
+    }
+    
+    // Événement pour les liens ouverts quand l'app est déjà lancée
+    app.on('open-url', (event, url) => {
+        event.preventDefault();
+        handleDeepLink(url);
+    });
+}
+
+function handleDeepLink(url) {
+    // Parser l'URL
+    // learnpress://course/123
+    // learnpress://lesson/456
+    
+    const urlParts = url.replace('learnpress://', '').split('/');
+    const type = urlParts[0];
+    const id = urlParts[1];
+    
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('deep-link', { type, id });
+        
+        // Mettre la fenêtre au premier plan
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+    }
+}
+
 
 // Générer ou récupérer une clé de chiffrement sécurisée
 function getOrCreateEncryptionKey() {
