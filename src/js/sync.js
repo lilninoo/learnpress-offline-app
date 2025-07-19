@@ -411,6 +411,23 @@ async function syncItem(type, id, data) {
     }
 }
 
+
+// Ajouter une file de synchronisation persistante
+async function queueSyncItem(type, id, action, data) {
+    // Sauvegarder dans la base locale
+    await window.electronAPI.db.addToSyncQueue(type, id, action, data);
+    
+    // Tenter de synchroniser si en ligne
+    const isOnline = await window.electronAPI.checkInternet();
+    if (isOnline && !SyncState.isSyncing) {
+        // Synchroniser après un délai pour grouper les actions
+        clearTimeout(SyncState.syncTimeout);
+        SyncState.syncTimeout = setTimeout(() => {
+            syncLessonProgress();
+        }, 5000);
+    }
+}
+
 // Obtenir le statut de synchronisation
 function getSyncStatus() {
     return {
