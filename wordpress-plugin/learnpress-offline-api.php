@@ -206,9 +206,10 @@ final class COL_LMS_Offline_API {
      * Initialiser les hooks WordPress
      */
     private function init_hooks() {
-        // Hooks d'initialisation
+        // Hooks d'initialisation - CORRIGÉ
         add_action('init', array($this, 'init'), 0);
         add_action('rest_api_init', array($this, 'register_routes'));
+        add_action('rest_api_init', array($this, 'init_rest_components'), 5);
         add_action('plugins_loaded', array($this, 'load_textdomain'));
         
         // Hooks d'activation/désactivation
@@ -257,7 +258,7 @@ final class COL_LMS_Offline_API {
         // Charger la configuration
         $this->load_config();
         
-        // Initialiser les composants
+        // Initialiser les composants NON-REST seulement
         $this->init_components();
         
         // Planifier les tâches CRON
@@ -275,6 +276,49 @@ final class COL_LMS_Offline_API {
                 'version' => COL_LMS_API_VERSION,
                 'loaded_classes' => $this->loaded_classes
             ));
+        }
+    }
+    
+    /**
+     * NOUVELLE MÉTHODE : Initialiser les composants REST sur rest_api_init
+     */
+    public function init_rest_components() {
+        if (!$this->is_api_enabled()) {
+            return;
+        }
+        
+        // Vérifier les dépendances avant d'initialiser les composants REST
+        if (!class_exists('LearnPress')) {
+            return;
+        }
+        
+        // Initialiser les classes qui gèrent les routes REST
+        if (class_exists('COL_LMS_Auth')) {
+            COL_LMS_Auth::instance();
+        }
+        
+        if (class_exists('COL_LMS_Courses')) {
+            COL_LMS_Courses::instance();
+        }
+        
+        if (class_exists('COL_LMS_Sync')) {
+            COL_LMS_Sync::instance();
+        }
+        
+        if (class_exists('COL_LMS_Packages')) {
+            COL_LMS_Packages::instance();
+        }
+        
+        if (class_exists('COL_LMS_API')) {
+            COL_LMS_API::instance();
+        }
+        
+        // Hook pour les extensions
+        do_action('col_lms_rest_components_loaded', $this);
+        
+        // Log de l'initialisation REST
+        if (COL_LMS_API_DEBUG) {
+            $this->log_debug('Composants REST initialisés avec succès');
         }
     }
     
@@ -358,31 +402,13 @@ final class COL_LMS_Offline_API {
     }
     
     /**
-     * Initialiser les composants
+     * MODIFIÉ : Initialiser seulement les composants NON-REST
      */
     private function init_components() {
-        // Initialiser les classes si elles existent
-        if (class_exists('COL_LMS_Auth')) {
-            COL_LMS_Auth::instance();
-        }
+        // Les composants REST sont initialisés dans init_rest_components()
+        // Ici on peut initialiser d'autres composants qui ne gèrent pas de routes REST
         
-        if (class_exists('COL_LMS_Courses')) {
-            COL_LMS_Courses::instance();
-        }
-        
-        if (class_exists('COL_LMS_Sync')) {
-            COL_LMS_Sync::instance();
-        }
-        
-        if (class_exists('COL_LMS_Packages')) {
-            COL_LMS_Packages::instance();
-        }
-        
-        if (class_exists('COL_LMS_API')) {
-            COL_LMS_API::instance();
-        }
-        
-        // Permettre l'ajout d'autres composants
+        // Permettre l'ajout d'autres composants non-REST
         do_action('col_lms_init_components', $this);
     }
     
@@ -423,7 +449,7 @@ final class COL_LMS_Offline_API {
     }
     
     /**
-     * Enregistrer les routes REST API
+     * Enregistrer les routes REST API principales
      */
     public function register_routes() {
         if (!$this->is_api_enabled()) {
@@ -959,17 +985,6 @@ function col_lms_log_action($action, $context = array()) {
         COL_LMS_Logger::info($action, $context);
     }
 }
-
-// Hook de vérification de compatibilité au chargement
-add_action('plugins_loaded', function() {
-    if (!class_exists('LearnPress')) {
-        add_action('admin_notices', array(col_lms_api(), 'learnpress_missing_notice'));
-    }
-    
-    if (!function_exists('pmpro_hasMembershipLevel')) {
-        add_action('admin_notices', array(col_lms_api(), 'pmpro_info_notice'));
-    }
-}, 11);
 
 // Hook de vérification de compatibilité au chargement
 add_action('plugins_loaded', function() {
