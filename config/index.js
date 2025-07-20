@@ -4,34 +4,35 @@ const { app } = require('electron');
 
 const isDev = process.env.NODE_ENV === 'development';
 const isTest = process.env.NODE_ENV === 'test';
+const isProduction = !isDev && !isTest;
 
 const config = {
     // Environnement
     env: process.env.NODE_ENV || 'production',
     isDev,
     isTest,
-    isProduction: !isDev && !isTest,
-    
+    isProduction,
+
     // Application
     app: {
         name: 'LearnPress Offline',
-        version: app?.getVersion() || '1.0.0',
+        version: app?.getVersion?.() || '1.0.0',
         id: 'com.teachmemore.learnpress-offline',
         protocol: 'learnpress',
-        userAgent: `LearnPressOffline/${app?.getVersion() || '1.0.0'}`
+        userAgent: `LearnPressOffline/${app?.getVersion?.() || '1.0.0'}`
     },
-    
+
     // Chemins
     paths: {
-        userData: app?.getPath('userData') || path.join(__dirname, '..', 'userData'),
-        database: path.join(app?.getPath('userData') || '.', 'database'),
-        courses: path.join(app?.getPath('userData') || '.', 'courses'),
-        media: path.join(app?.getPath('userData') || '.', 'media'),
-        logs: path.join(app?.getPath('userData') || '.', 'logs'),
-        temp: path.join(app?.getPath('userData') || '.', 'temp'),
-        cache: path.join(app?.getPath('userData') || '.', 'cache')
+        userData: app?.getPath?.('userData') || path.join(__dirname, '..', 'userData'),
+        database: path.join(app?.getPath?.('userData') || '.', 'database'),
+        courses: path.join(app?.getPath?.('userData') || '.', 'courses'),
+        media: path.join(app?.getPath?.('userData') || '.', 'media'),
+        logs: path.join(app?.getPath?.('userData') || '.', 'logs'),
+        temp: path.join(app?.getPath?.('userData') || '.', 'temp'),
+        cache: path.join(app?.getPath?.('userData') || '.', 'cache')
     },
-    
+
     // Base de données
     database: {
         filename: 'courses.db',
@@ -41,12 +42,12 @@ const config = {
             timeout: 5000
         }
     },
-    
+
     // API
     api: {
-        timeout: 30000, // 30 secondes
+        timeout: 30000,
         retryAttempts: 3,
-        retryDelay: 1000, // 1 seconde
+        retryDelay: 1000,
         namespace: 'col-lms/v1',
         endpoints: {
             auth: {
@@ -72,34 +73,34 @@ const config = {
             }
         }
     },
-    
+
     // Sécurité
     security: {
         algorithm: 'aes-256-gcm',
         keyLength: 32,
         saltLength: 32,
         iterations: 100000,
-        tokenExpiry: 3600, // 1 heure
-        refreshTokenExpiry: 604800, // 7 jours
+        tokenExpiry: 3600,
+        refreshTokenExpiry: 604800,
         maxLoginAttempts: 5,
-        lockoutDuration: 900 // 15 minutes
+        lockoutDuration: 900
     },
-    
+
     // Synchronisation
     sync: {
         autoSync: true,
-        syncInterval: 1800000, // 30 minutes
+        syncInterval: 1800000,
         batchSize: 100,
-        retryDelay: 60000, // 1 minute
+        retryDelay: 60000,
         maxRetries: 3
     },
-    
+
     // Téléchargement
     download: {
         maxConcurrent: 2,
-        chunkSize: 1048576, // 1 MB
+        chunkSize: 1048576,
         resumable: true,
-        timeout: 300000, // 5 minutes par fichier
+        timeout: 300000,
         retryAttempts: 3,
         defaultOptions: {
             includeVideos: true,
@@ -108,54 +109,54 @@ const config = {
             encryptionEnabled: true
         }
     },
-    
+
     // Stockage
     storage: {
-        maxCourseAge: 2592000000, // 30 jours en ms
-        maxCacheSize: 1073741824, // 1 GB
-        cleanupInterval: 86400000, // 24 heures
-        compressionLevel: 6 // 0-9
+        maxCourseAge: 2592000000,
+        maxCacheSize: 1073741824,
+        cleanupInterval: 86400000,
+        compressionLevel: 6
     },
-    
+
     // Lecteur vidéo
     player: {
-        saveProgressInterval: 5000, // 5 secondes
-        seekStep: 10, // secondes
+        saveProgressInterval: 5000,
+        seekStep: 10,
         playbackRates: [0.5, 0.75, 1, 1.25, 1.5, 2],
         defaultPlaybackRate: 1,
         resumePlayback: true
     },
-    
+
     // Interface utilisateur
     ui: {
-        theme: 'auto', // auto, light, dark
+        theme: 'auto',
         language: 'fr',
         dateFormat: 'DD/MM/YYYY',
         timeFormat: 'HH:mm',
         animations: true,
         compactMode: false
     },
-    
+
     // Logs
     logging: {
         level: isDev ? 'debug' : 'info',
         maxFiles: 5,
-        maxFileSize: 10485760, // 10 MB
+        maxFileSize: 10485760,
         format: isDev ? 'pretty' : 'json'
     },
-    
+
     // Mises à jour
     updates: {
         autoCheck: true,
         autoDownload: false,
-        checkInterval: 14400000, // 4 heures
+        checkInterval: 14400000,
         channel: isDev ? 'beta' : 'stable'
     },
-    
-    // Abonnements (Paid Memberships Pro)
+
+    // Abonnements
     membership: {
-        checkInterval: 3600000, // 1 heure
-        warningDays: 7, // Avertir 7 jours avant expiration
+        checkInterval: 3600000,
+        warningDays: 7,
         restrictedFeatures: [
             'download_premium_courses',
             'offline_sync',
@@ -163,19 +164,19 @@ const config = {
         ],
         freeTierLimits: {
             maxCourses: 3,
-            maxDownloadSize: 536870912, // 500 MB
+            maxDownloadSize: 536870912,
             syncEnabled: false
         }
     },
-    
+
     // Performances
     performance: {
         lazyLoadImages: true,
         preloadCount: 5,
-        maxMemoryUsage: 536870912, // 512 MB
-        gcInterval: 300000 // 5 minutes
+        maxMemoryUsage: 536870912,
+        gcInterval: 300000
     },
-    
+
     // Développement
     dev: {
         devTools: isDev,
@@ -193,58 +194,49 @@ config.getPath = (type) => {
 
 config.getApiUrl = (endpoint, params = {}) => {
     let url = endpoint;
-    
-    // Remplacer les paramètres
     Object.keys(params).forEach(key => {
         url = url.replace(`:${key}`, params[key]);
     });
-    
     return url;
 };
 
 config.isFeatureEnabled = (feature, userMembership = null) => {
-    if (!config.membership.restrictedFeatures.includes(feature)) {
-        return true;
-    }
-    
-    // Vérifier si l'utilisateur a un abonnement actif
+    if (!config.membership.restrictedFeatures.includes(feature)) return true;
     return userMembership && userMembership.is_active;
 };
 
-// Validation de la configuration
 config.validate = () => {
     const required = ['paths.userData', 'database.filename', 'api.namespace'];
     const errors = [];
-    
-    required.forEach(path => {
-        const keys = path.split('.');
+
+    required.forEach(pathStr => {
+        const keys = pathStr.split('.');
         let value = config;
-        
         for (const key of keys) {
             value = value[key];
             if (!value) {
-                errors.push(`Configuration manquante: ${path}`);
+                errors.push(`Configuration manquante: ${pathStr}`);
                 break;
             }
         }
     });
-    
+
     if (errors.length > 0) {
         throw new Error(`Erreurs de configuration:\n${errors.join('\n')}`);
     }
-    
+
     return true;
 };
 
-// Charger la configuration spécifique à l'environnement
+// Configuration spécifique à l'environnement
 if (isDev) {
     try {
         const devConfig = require('./development');
         Object.assign(config, devConfig);
     } catch (e) {
-        // Pas de config dev spécifique
+        console.warn('[config] Aucun fichier de configuration dev détecté.');
     }
 }
 
-// Exporter un objet immutable en production
+// Export
 module.exports = isProduction ? Object.freeze(config) : config;
