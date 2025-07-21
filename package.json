@@ -35,7 +35,8 @@
     "build:mac": "electron-builder --mac",
     "build:win": "electron-builder --win",
     "build:linux": "electron-builder --linux",
-    "postinstall": "electron-builder install-app-deps",
+    "postinstall": "electron-builder install-app-deps && npm run rebuild-sqlite3",
+    "rebuild-sqlite3": "electron-rebuild -f -w better-sqlite3",
     "dev-utils": "node scripts/dev-utils.js",
     "clean": "npm run dev-utils clean",
     "generate-key": "npm run dev-utils generate-key",
@@ -69,7 +70,7 @@
   },
   "dependencies": {
     "axios": "^1.5.0",
-    "sqlite3": "^5.1.6",
+    "better-sqlite3": "^8.7.0",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.1.4",
     "electron-log": "^5.0.0",
