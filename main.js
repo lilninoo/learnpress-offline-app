@@ -546,123 +546,6 @@ function handleDeepLink(url) {
     }
 }
 
-// ==================== IPC HANDLERS ADDITIONNELS ====================
-
-function setupAdditionalIpcHandlers() {
-    // Auto-login check
-    ipcMain.handle('check-auto-login', async () => {
-        const token = store.get('token');
-        const apiUrl = store.get('apiUrl');
-        const username = store.get('username');
-        
-        if (token && apiUrl) {
-            try {
-                // Tenter de restaurer le client API
-                apiClient = new LearnPressAPIClient(apiUrl, deviceId);
-                apiClient.token = token;
-                apiClient.refreshToken = store.get('refreshToken');
-                apiClient.userId = store.get('userId');
-                
-                // Vérifier si le token est encore valide
-                const verification = await apiClient.verifySubscription();
-                
-                if (verification.success) {
-                    return {
-                        success: true,
-                        username: username,
-                        apiUrl: apiUrl
-                    };
-                } else {
-                    // Token expiré, essayer de le rafraîchir
-                    const refreshResult = await apiClient.refreshAccessToken();
-                    if (refreshResult.success) {
-                        store.set('token', apiClient.token);
-                        return {
-                            success: true,
-                            username: username,
-                            apiUrl: apiUrl
-                        };
-                    }
-                }
-            } catch (error) {
-                console.error('Erreur lors de la vérification auto-login:', error);
-            }
-        }
-        
-        return { success: false };
-    });
-    
-    // Handlers pour les abonnements
-    ipcMain.handle('get-membership-restrictions', () => {
-        return store.get('membershipRestrictions') || null;
-    });
-
-    ipcMain.handle('check-feature-access', (event, feature) => {
-        const restrictions = store.get('membershipRestrictions');
-        if (!restrictions) return true;
-
-        return !config.membership.restrictedFeatures.includes(feature);
-    });
-
-    // Handlers pour les logs et erreurs
-    ipcMain.handle('get-error-logs', () => {
-        return errorHandler.getRecentErrors();
-    });
-
-    ipcMain.handle('report-error', async (event, error) => {
-        await errorHandler.handleError(error, { source: 'renderer' });
-    });
-
-    ipcMain.handle('save-log', async (event, logEntry) => {
-        try {
-            const logsDir = path.join(app.getPath('userData'), 'logs');
-            if (!fs.existsSync(logsDir)) {
-                fs.mkdirSync(logsDir, { recursive: true });
-            }
-
-            const logFile = path.join(logsDir, `renderer-${new Date().toISOString().split('T')[0]}.log`);
-            const logLine = `${logEntry.timestamp} [${logEntry.level}] ${logEntry.message}\n`;
-
-            fs.appendFileSync(logFile, logLine);
-            return { success: true };
-        } catch (error) {
-            console.error('Erreur lors de la sauvegarde du log:', error);
-            return { success: false, error: error.message };
-        }
-    });
-
-    // Handlers pour les notifications
-    ipcMain.handle('show-notification', (event, options) => {
-        if (Notification.isSupported()) {
-            const iconPath = path.join(__dirname, 'assets/icons/icon.png');
-            const notification = new Notification({
-                title: options.title || 'LearnPress Offline',
-                body: options.body,
-                icon: fs.existsSync(iconPath) ? iconPath : undefined,
-                silent: options.silent || false
-            });
-
-            notification.on('click', () => {
-                if (mainWindow) {
-                    if (mainWindow.isMinimized()) mainWindow.restore();
-                    mainWindow.focus();
-                }
-            });
-
-            notification.show();
-        }
-        return { success: true };
-    });
-
-    // Handler pour l'export PDF (placeholder)
-    ipcMain.handle('export-certificate-pdf', async (event, certificateData) => {
-        return { 
-            success: false, 
-            error: 'Fonctionnalité en cours de développement' 
-        };
-    });
-}
-
 // ==================== SINGLE INSTANCE ====================
 
 const gotTheLock = app.requestSingleInstanceLock();
@@ -712,9 +595,6 @@ app.whenReady().then(async () => {
             errorHandler,
             config
         });
-
-        // Ajouter les handlers supplémentaires
-        setupAdditionalIpcHandlers();
 
         // Démarrer la maintenance
         startMaintenance();
