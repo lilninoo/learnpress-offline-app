@@ -260,18 +260,20 @@ function cleanOldLogs() {
 
 // ==================== INITIALISATION ====================
 
-async function initializeDatabase() {
+// ==================== INITIALISATION ====================
+
+function initializeDatabase() {
     try {
         const dbPath = path.join(app.getPath('userData'), 'database', 'courses.db');
         const encryptionKey = getOrCreateEncryptionKey();
         database = new SecureDatabase(dbPath, encryptionKey);
         log.info('Base de données initialisée');
+        return Promise.resolve();
     } catch (error) {
         log.error('Erreur lors de l\'initialisation de la base de données:', error);
-        throw error;
+        return Promise.reject(error);
     }
 }
-
 // ==================== CRÉATION DES FENÊTRES ====================
 
 function createSplashWindow() {
