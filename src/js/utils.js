@@ -14,7 +14,7 @@ function formatFileSize(bytes) {
 
 // Formater la durée
 function formatDuration(seconds) {
-    if (!seconds) return '0:00';
+    if (!seconds || isNaN(seconds)) return '0:00';
     
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -59,6 +59,17 @@ function formatRelativeTime(date) {
     if (seconds < 604800) return `Il y a ${Math.floor(seconds / 86400)} jours`;
     
     return formatDate(date, 'short');
+}
+
+// ==================== SÉCURITÉ ====================
+
+// Échapper le HTML pour éviter les injections
+function escapeHtml(text) {
+    if (!text) return '';
+    
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 // ==================== VALIDATION ====================
@@ -178,20 +189,34 @@ const LocalCache = {
 const Logger = {
     log(message, data = null) {
         console.log(`[LearnPress] ${message}`, data || '');
+        if (window.Logger && window.Logger !== Logger) {
+            window.Logger.info(message, data);
+        }
     },
     
     warn(message, data = null) {
         console.warn(`[LearnPress] ${message}`, data || '');
+        if (window.Logger && window.Logger !== Logger) {
+            window.Logger.warn(message, data);
+        }
     },
     
     error(message, error = null) {
         console.error(`[LearnPress] ${message}`, error || '');
-        window.electronAPI.logError({ message, error: error?.toString() });
+        if (window.electronAPI) {
+            window.electronAPI.logError({ message, error: error?.toString() });
+        }
+        if (window.Logger && window.Logger !== Logger) {
+            window.Logger.error(message, error);
+        }
     },
     
     debug(message, data = null) {
         if (window.DEBUG_MODE) {
             console.debug(`[LearnPress Debug] ${message}`, data || '');
+        }
+        if (window.Logger && window.Logger !== Logger) {
+            window.Logger.debug(message, data);
         }
     }
 };
@@ -298,13 +323,15 @@ function filterArray(array, filters) {
 // Calculer l'espace de stockage utilisé
 async function calculateStorageUsed() {
     try {
-        // Cette fonction devrait idéalement être implémentée côté main process
-        // Pour l'instant, retourner une valeur fictive
-        return {
-            courses: 1024 * 1024 * 245, // 245 MB
-            cache: 1024 * 1024 * 50,    // 50 MB
-            total: 1024 * 1024 * 295    // 295 MB
-        };
+        const stats = await window.electronAPI.db.getStats();
+        if (stats.success) {
+            return {
+                courses: stats.result.dbSize || 0,
+                cache: 0,
+                total: stats.result.dbSize || 0
+            };
+        }
+        return { courses: 0, cache: 0, total: 0 };
     } catch (error) {
         Logger.error('Erreur lors du calcul du stockage:', error);
         return { courses: 0, cache: 0, total: 0 };
@@ -326,10 +353,14 @@ function getFileIcon(filename) {
         'jpg': '🖼️', 'jpeg': '🖼️', 'png': '🖼️', 'gif': '🖼️',
         'mp3': '🎵', 'wav': '🎵', 'ogg': '🎵',
         'zip': '📦', 'rar': '📦', '7z': '📦',
-        'xls': '📊', 'xlsx': '📊', 'csv': '📊'
+        'xls': '📊', 'xlsx': '📊', 'csv': '📊',
+        'video': '🎥',
+        'text': '📄',
+        'quiz': '❓',
+        'assignment': '📋'
     };
     
-    return icons[ext] || '📎';
+    return icons[ext] || icons[filename] || '📎';
 }
 
 // Parser les paramètres de l'URL
@@ -344,6 +375,194 @@ function parseQueryParams(url) {
     return result;
 }
 
+// ==================== FONCTIONS UI GLOBALES ====================
+
+// Afficher le loader
+function showLoader(message = 'Chargement...') {
+    const loader = document.getElementById('global-loader');
+    if (loader) {
+        loader.querySelector('p').textContent = message;
+        loader.classList.add('show');
+    }
+}
+
+// Masquer le loader
+function hideLoader() {
+    const loader = document.getElementById('global-loader');
+    if (loader) {
+        loader.classList.remove('show');
+    }
+}
+
+// Afficher une erreur
+function showError(message) {
+    showNotification(message, 'error');
+}
+
+// Afficher un succès
+function showSuccess(message) {
+    showNotification(message, 'success');
+}
+
+// Afficher une info
+function showInfo(message) {
+    showNotification(message, 'info');
+}
+
+// Afficher un avertissement
+function showWarning(message) {
+    showNotification(message, 'warning');
+}
+
+// Afficher une notification
+function showNotification(message, type = 'info') {
+    // Supprimer les anciennes notifications du même type
+    const oldNotifications = document.querySelectorAll(`.notification-${type}`);
+    oldNotifications.forEach(n => n.remove());
+    
+    const notification = document.createElement('div');
+    notification.className = `notification notification-${type} show`;
+    notification.innerHTML = `
+        <span class="notification-icon">${getNotificationIcon(type)}</span>
+        <span class="notification-message">${escapeHtml(message)}</span>
+        <button class="notification-close" onclick="this.parentElement.remove()">×</button>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    // Auto-supprimer après 5 secondes
+    setTimeout(() => {
+        notification.classList.add('fade-out');
+        setTimeout(() => notification.remove(), 300);
+    }, 5000);
+}
+
+// Obtenir l'icône de notification
+function getNotificationIcon(type) {
+    const icons = {
+        'success': '✅',
+        'error': '❌',
+        'warning': '⚠️',
+        'info': 'ℹ️'
+    };
+    return icons[type] || 'ℹ️';
+}
+
+// Afficher une boîte de message
+function showMessage(message, type = 'info') {
+    const messageEl = document.createElement('div');
+    messageEl.className = `message message-${type}`;
+    messageEl.textContent = message;
+    
+    const container = document.getElementById('message-container') || document.body;
+    container.appendChild(messageEl);
+    
+    setTimeout(() => messageEl.remove(), 5000);
+}
+
+// Afficher/Masquer une page
+function showPage(pageId) {
+    // Masquer toutes les pages
+    document.querySelectorAll('.page').forEach(page => {
+        page.classList.add('hidden');
+    });
+    
+    // Afficher la page demandée
+    const page = document.getElementById(pageId);
+    if (page) {
+        page.classList.remove('hidden');
+    }
+}
+
+// Afficher le player
+function showPlayer() {
+    showPage('player-page');
+}
+
+// Afficher le dashboard
+function showDashboard() {
+    showPage('dashboard-page');
+}
+
+// Créer une carte de cours
+function createCourseCard(course, progress) {
+    const card = document.createElement('div');
+    card.className = 'course-card card';
+    card.dataset.courseId = course.course_id;
+    
+    const isExpired = isCourseExpired(course);
+    const thumbnailUrl = course.thumbnail || 'assets/default-course.jpg';
+    
+    card.innerHTML = `
+        <div class="course-thumbnail-wrapper">
+            <img src="${escapeHtml(thumbnailUrl)}" 
+                 alt="${escapeHtml(course.title)}" 
+                 class="course-thumbnail"
+                 onerror="this.src='assets/default-course.jpg'">
+            ${isExpired ? '<div class="course-expired-badge">Expiré</div>' : ''}
+        </div>
+        <div class="course-info">
+            <h3 class="course-title">${escapeHtml(course.title)}</h3>
+            <p class="course-instructor">${escapeHtml(course.instructor_name || 'Instructeur')}</p>
+            <div class="course-stats">
+                <span>📚 ${course.lessons_count || 0} leçons</span>
+                <span>⏱️ ${course.duration || 'Durée inconnue'}</span>
+            </div>
+        </div>
+        ${progress ? `
+        <div class="course-progress">
+            <div class="course-progress-bar" style="width: ${Math.round(progress.completion_percentage || 0)}%"></div>
+        </div>
+        ` : ''}
+        <div class="course-actions">
+            <button class="btn btn-icon" onclick="event.stopPropagation(); deleteCourse(${course.course_id})" title="Supprimer">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                </svg>
+            </button>
+        </div>
+    `;
+    
+    // Ajouter l'événement de clic
+    card.addEventListener('click', () => {
+        if (!isExpired) {
+            openCourse(course.course_id);
+        } else {
+            showWarning('Ce cours a expiré et ne peut plus être consulté');
+        }
+    });
+    
+    return card;
+}
+
+// Marquer une leçon comme active
+function markLessonActive(lessonId) {
+    // Retirer la classe active de toutes les leçons
+    document.querySelectorAll('.lesson-item').forEach(item => {
+        item.classList.remove('active');
+    });
+    
+    // Ajouter la classe active à la leçon sélectionnée
+    const lessonEl = document.querySelector(`[data-lesson-id="${lessonId}"]`);
+    if (lessonEl) {
+        lessonEl.classList.add('active');
+    }
+}
+
+// Mettre à jour l'interface de la leçon
+function updateLessonUI() {
+    const completeBtn = document.getElementById('complete-lesson');
+    if (completeBtn) {
+        if (window.currentLesson && window.currentLesson.completed) {
+            completeBtn.textContent = 'Leçon terminée ✓';
+            completeBtn.disabled = true;
+        } else {
+            completeBtn.textContent = 'Marquer comme terminé';
+            completeBtn.disabled = false;
+        }
+    }
+}
+
 // ==================== EXPORTS GLOBAUX ====================
 
 // Exposer les utilitaires globalement
@@ -353,6 +572,9 @@ window.Utils = {
     formatDuration,
     formatDate,
     formatRelativeTime,
+    
+    // Sécurité
+    escapeHtml,
     
     // Validation
     isValidUrl,
@@ -395,22 +617,3 @@ window.logDebug = Logger.debug;
 
 // Mode debug (peut être activé via la console)
 window.DEBUG_MODE = false;
-
-// ==================== POLYFILLS ====================
-
-// Polyfill pour padStart (si nécessaire)
-if (!String.prototype.padStart) {
-    String.prototype.padStart = function padStart(targetLength, padString) {
-        targetLength = targetLength >> 0;
-        padString = String(typeof padString !== 'undefined' ? padString : ' ');
-        if (this.length >= targetLength) {
-            return String(this);
-        } else {
-            targetLength = targetLength - this.length;
-            if (targetLength > padString.length) {
-                padString += padString.repeat(targetLength / padString.length);
-            }
-            return padString.slice(0, targetLength) + String(this);
-        }
-    };
-}
