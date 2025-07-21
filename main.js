@@ -28,11 +28,11 @@ process.on('uncaughtException', async (error) => {
         type: 'uncaughtException',
         fatal: true 
     });
-    
+
     if (database) {
         database.close();
     }
-    
+
     app.exit(1);
 });
 
@@ -54,48 +54,12 @@ let membershipCheckInterval = null;
 let maintenanceInterval = null;
 
 const isDev = process.env.NODE_ENV === 'development';
-
-// Fonction robuste pour obtenir le device ID
-function getDeviceId() {
-    try {
-        // Essayer d'obtenir le machine ID natif
-        const deviceId = machineIdSync();
-        
-        // Valider le format
-        if (deviceId && deviceId.length >= 10 && /^[a-f0-9-]+$/i.test(deviceId)) {
-            log.info('Device ID récupéré avec succès:', deviceId.substring(0, 8) + '...');
-            return deviceId;
-        }
-        
-        throw new Error('Device ID invalide');
-    } catch (error) {
-        console.error('Erreur lors de la récupération du machine ID:', error);
-        
-        // Utiliser electron-store pour le stockage persistant
-        const deviceStore = new Store({ name: 'device-config' });
-        
-        // Utiliser un fallback stocké
-        const storedId = deviceStore.get('fallbackDeviceId');
-        if (storedId) {
-            console.log('Utilisation du device ID de fallback');
-            return storedId;
-        }
-        
-        // Générer un nouveau device ID
-        const newId = crypto.randomUUID();
-        deviceStore.set('fallbackDeviceId', newId);
-        console.log('Nouveau device ID généré:', newId);
-        
-        return newId;
-    }
-}
-
-const deviceId = getDeviceId();
+const deviceId = machineIdSync();
 
 // Générer ou récupérer une clé de chiffrement sécurisée
 function getOrCreateEncryptionKey() {
     const keyFile = path.join(app.getPath('userData'), '.key');
-    
+
     if (fs.existsSync(keyFile)) {
         return fs.readFileSync(keyFile, 'utf8');
     } else {
@@ -128,7 +92,7 @@ const store = new Store({
 
 function startMembershipCheck() {
     checkMembershipStatus();
-    
+
     membershipCheckInterval = setInterval(async () => {
         await checkMembershipStatus();
     }, config.membership.checkInterval);
@@ -143,10 +107,10 @@ function stopMembershipCheck() {
 
 async function checkMembershipStatus() {
     if (!apiClient) return;
-    
+
     try {
         const result = await apiClient.verifySubscription();
-        
+
         if (!result.success || !result.isActive) {
             if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('membership-status-changed', {
@@ -154,15 +118,15 @@ async function checkMembershipStatus() {
                     subscription: result.subscription
                 });
             }
-            
+
             applyMembershipRestrictions(result.subscription);
         } else {
             removeMembershipRestrictions();
-            
+
             if (result.subscription.expires_at) {
                 const expiresAt = new Date(result.subscription.expires_at);
                 const daysUntilExpiry = Math.floor((expiresAt - new Date()) / (1000 * 60 * 60 * 24));
-                
+
                 if (daysUntilExpiry <= config.membership.warningDays && daysUntilExpiry > 0) {
                     if (mainWindow && !mainWindow.isDestroyed()) {
                         mainWindow.webContents.send('membership-expiring-soon', {
@@ -185,9 +149,9 @@ function applyMembershipRestrictions(subscription) {
         maxCourses: config.membership.freeTierLimits.maxCourses,
         maxDownloadSize: config.membership.freeTierLimits.maxDownloadSize
     };
-    
+
     store.set('membershipRestrictions', restrictions);
-    
+
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('apply-restrictions', restrictions);
     }
@@ -195,7 +159,7 @@ function applyMembershipRestrictions(subscription) {
 
 function removeMembershipRestrictions() {
     store.delete('membershipRestrictions');
-    
+
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('remove-restrictions');
     }
@@ -208,10 +172,10 @@ function startMaintenance() {
         try {
             if (database) {
                 await database.cleanupExpiredData();
-                
+
                 const stats = await database.getStats();
                 const diskSpace = await checkDiskSpace();
-                
+
                 if (diskSpace.free < 1024 * 1024 * 1024) { // Moins de 1GB
                     if (mainWindow && !mainWindow.isDestroyed()) {
                         mainWindow.webContents.send('low-disk-space', {
@@ -221,9 +185,9 @@ function startMaintenance() {
                     }
                 }
             }
-            
+
             cleanOldLogs();
-            
+
         } catch (error) {
             console.error('Erreur lors de la maintenance:', error);
         }
@@ -241,10 +205,10 @@ async function checkDiskSpace() {
     const { exec } = require('child_process');
     const util = require('util');
     const execPromise = util.promisify(exec);
-    
+
     try {
         const userDataPath = app.getPath('userData');
-        
+
         if (process.platform === 'win32') {
             const drive = path.parse(userDataPath).root;
             const { stdout } = await execPromise(`wmic logicaldisk where caption="${drive.replace('\\', '')}" get size,freespace`);
@@ -275,15 +239,15 @@ async function checkDiskSpace() {
 function cleanOldLogs() {
     const logsDir = path.join(app.getPath('userData'), 'logs');
     const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 jours
-    
+
     fs.readdir(logsDir, (err, files) => {
         if (err) return;
-        
+
         files.forEach(file => {
             const filePath = path.join(logsDir, file);
             fs.stat(filePath, (err, stats) => {
                 if (err) return;
-                
+
                 if (Date.now() - stats.mtime.getTime() > maxAge) {
                     fs.unlink(filePath, (err) => {
                         if (err) console.error('Erreur lors de la suppression du log:', err);
@@ -296,6 +260,9 @@ function cleanOldLogs() {
 
 // ==================== INITIALISATION ====================
 
+async function initializeDatabase() {
+// ==================== INITIALISATION ====================
+
 function initializeDatabase() {
     try {
         const dbPath = path.join(app.getPath('userData'), 'database', 'courses.db');
@@ -305,6 +272,7 @@ function initializeDatabase() {
         return Promise.resolve();
     } catch (error) {
         log.error('Erreur lors de l\'initialisation de la base de données:', error);
+        throw error;
         return Promise.reject(error);
     }
 }
@@ -325,7 +293,7 @@ function createSplashWindow() {
     });
 
     splashWindow.loadFile(path.join(__dirname, 'src/splash.html'));
-    
+
     splashWindow.on('closed', () => {
         splashWindow = null;
     });
@@ -512,12 +480,12 @@ function createMenu() {
 
 function handleDeepLinking() {
     app.setAsDefaultProtocolClient('learnpress');
-    
+
     const deeplinkingUrl = process.argv.find((arg) => arg.startsWith('learnpress://'));
     if (deeplinkingUrl) {
         handleDeepLink(deeplinkingUrl);
     }
-    
+
     app.on('open-url', (event, url) => {
         event.preventDefault();
         handleDeepLink(url);
@@ -528,10 +496,10 @@ function handleDeepLink(url) {
     const urlParts = url.replace('learnpress://', '').split('/');
     const type = urlParts[0];
     const id = urlParts[1];
-    
+
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('deep-link', { type, id });
-        
+
         if (mainWindow.isMinimized()) mainWindow.restore();
         mainWindow.focus();
     }
@@ -548,7 +516,7 @@ function setupAdditionalIpcHandlers() {
     ipcMain.handle('check-feature-access', (event, feature) => {
         const restrictions = store.get('membershipRestrictions');
         if (!restrictions) return true;
-        
+
         return config.isFeatureEnabled(feature, { is_active: !restrictions });
     });
 
@@ -567,10 +535,10 @@ function setupAdditionalIpcHandlers() {
             if (!fs.existsSync(logsDir)) {
                 fs.mkdirSync(logsDir, { recursive: true });
             }
-            
+
             const logFile = path.join(logsDir, `renderer-${new Date().toISOString().split('T')[0]}.log`);
             const logLine = `${logEntry.timestamp} [${logEntry.level}] ${logEntry.message}\n`;
-            
+
             fs.appendFileSync(logFile, logLine);
             return { success: true };
         } catch (error) {
@@ -588,14 +556,14 @@ function setupAdditionalIpcHandlers() {
                 icon: path.join(__dirname, 'assets/icons/icon.png'),
                 silent: options.silent || false
             });
-            
+
             notification.on('click', () => {
                 if (mainWindow) {
                     if (mainWindow.isMinimized()) mainWindow.restore();
                     mainWindow.focus();
                 }
             });
-            
+
             notification.show();
         }
     });
@@ -612,21 +580,6 @@ function setupAdditionalIpcHandlers() {
         } catch (error) {
             return { success: false, error: error.message };
         }
-    });
-
-    // Vérifier l'accès à une fonctionnalité premium
-    ipcMain.handle('check-premium-feature', (event, feature) => {
-        const restrictions = store.get('membershipRestrictions');
-        if (!restrictions) return true;
-        
-        const premiumFeatures = [
-            'unlimited_downloads',
-            'offline_sync',
-            'certificate_export',
-            'advanced_stats'
-        ];
-        
-        return !premiumFeatures.includes(feature);
     });
 }
 
@@ -651,71 +604,15 @@ app.whenReady().then(async () => {
     try {
         // Valider la configuration
         config.validate();
-        
-        // Log des informations système
-        log.info('=== Démarrage de LearnPress Offline ===');
-        log.info('Version:', app.getVersion());
-        log.info('Platform:', process.platform);
-        log.info('Architecture:', process.arch);
-        log.info('Device ID:', deviceId.substring(0, 8) + '...');
-        log.info('User Data Path:', app.getPath('userData'));
-        
+
         // Initialiser la base de données
         await initializeDatabase();
-        
-        // Vérifier si on doit restaurer la session (avec timeout)
-        const savedToken = store.get('token');
-        const savedRefreshToken = store.get('refreshToken');
-        const savedApiUrl = store.get('apiUrl');
-        
-        if (savedToken && savedRefreshToken && savedApiUrl) {
-            try {
-                // Créer un timeout de 3 secondes pour la restauration de session
-                const sessionRestorePromise = new Promise(async (resolve, reject) => {
-                    const timeout = setTimeout(() => {
-                        reject(new Error('Session restore timeout'));
-                    }, 3000);
-                    
-                    try {
-                        apiClient = new LearnPressAPIClient(savedApiUrl, deviceId);
-                        apiClient.token = savedToken;
-                        apiClient.refreshToken = savedRefreshToken;
-                        apiClient.userId = store.get('userId');
-                        
-                        // Vérifier si le token est toujours valide
-                        const result = await apiClient.verifySubscription();
-                        clearTimeout(timeout);
-                        
-                        if (!result.success) {
-                            // Token invalide, nettoyer
-                            store.delete('token');
-                            store.delete('refreshToken');
-                            apiClient = null;
-                            reject(new Error('Invalid token'));
-                        } else {
-                            resolve();
-                        }
-                    } catch (error) {
-                        clearTimeout(timeout);
-                        reject(error);
-                    }
-                });
-                
-                await sessionRestorePromise;
-                log.info('Session restaurée avec succès');
-            } catch (error) {
-                log.warn('Impossible de restaurer la session:', error.message);
-                store.delete('token');
-                store.delete('refreshToken');
-                apiClient = null;
-            }
-        }
-        
-        // Créer les fenêtres (IMPORTANT: toujours exécuté, même si la restauration échoue)
+
+        // Créer les fenêtres
         createSplashWindow();
         createMainWindow();
         createMenu();
-        
+
         // Configurer les gestionnaires IPC
         setupIpcHandlers(ipcMain, {
             store,
@@ -736,52 +633,35 @@ app.whenReady().then(async () => {
             errorHandler,
             config
         });
-        
+
         // Ajouter les handlers supplémentaires
         setupAdditionalIpcHandlers();
-        
+
         // Démarrer la maintenance
         startMaintenance();
-        
+
         // Vérifier les mises à jour
         if (!isDev && config.updates.autoCheck) {
             autoUpdater.checkForUpdatesAndNotify();
         }
-        
+
         // Gérer le deep linking
         handleDeepLinking();
-        
-        // Si une session était restaurée, démarrer la vérification d'abonnement
-        if (apiClient) {
-            startMembershipCheck();
-        }
-        
+
     } catch (error) {
         log.error('Erreur lors de l\'initialisation:', error);
         await errorHandler.handleError(error, { 
             type: 'initialization',
             fatal: true 
         });
-        
-        // Essayer quand même de créer une fenêtre minimale pour afficher l'erreur
-        if (!mainWindow) {
-            mainWindow = new BrowserWindow({
-                width: 800,
-                height: 600,
-                webPreferences: {
-                    nodeIntegration: false,
-                    contextIsolation: true
-                }
-            });
-            mainWindow.loadURL(`data:text/html,<h1>Erreur d'initialisation</h1><p>${error.message}</p>`);
-        }
+        app.quit();
     }
 });
 
 app.on('window-all-closed', () => {
     stopMembershipCheck();
     stopMaintenance();
-    
+
     if (process.platform !== 'darwin') {
         app.quit();
     }
@@ -790,24 +670,6 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
         createMainWindow();
-    }
-});
-
-app.on('before-quit', async () => {
-    log.info('=== Arrêt de LearnPress Offline ===');
-    
-    // Sauvegarder l'état si nécessaire
-    if (apiClient) {
-        store.set('lastShutdown', new Date().toISOString());
-    }
-    
-    // Fermer proprement la base de données
-    if (database) {
-        try {
-            database.close();
-        } catch (error) {
-            log.error('Erreur lors de la fermeture de la base de données:', error);
-        }
     }
 });
 
@@ -860,7 +722,7 @@ app.on('web-contents-created', (event, contents) => {
         event.preventDefault();
         shell.openExternal(navigationUrl);
     });
-    
+
     contents.session.webRequest.onHeadersReceived((details, callback) => {
         callback({
             responseHeaders: {
