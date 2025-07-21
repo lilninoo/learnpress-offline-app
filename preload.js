@@ -7,6 +7,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAppPath: () => ipcRenderer.invoke('get-app-path'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   
+  // Auto-login check
+  checkAutoLogin: () => ipcRenderer.invoke('check-auto-login'),
+  
   // Store sécurisé
   store: {
     get: (key) => ipcRenderer.invoke('store-get', key),
@@ -83,10 +86,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Sync
     getUnsyncedItems: () => ipcRenderer.invoke('db-get-unsynced-items'),
     markAsSynced: (syncIds) => ipcRenderer.invoke('db-mark-as-synced', syncIds),
+    addToSyncQueue: (entityType, entityId, action, data) => 
+      ipcRenderer.invoke('db-add-to-sync-queue', { entityType, entityId, action, data }),
     
     // Utils
     getExpiredCourses: () => ipcRenderer.invoke('db-get-expired-courses'),
-    cleanupExpiredData: () => ipcRenderer.invoke('db-cleanup-expired-data')
+    cleanupExpiredData: () => ipcRenderer.invoke('db-cleanup-expired-data'),
+    getStats: () => ipcRenderer.invoke('db-get-stats')
   },
   
   // File operations
@@ -110,30 +116,88 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Utils
   checkInternet: () => ipcRenderer.invoke('check-internet'),
   logError: (error) => ipcRenderer.invoke('log-error', error),
+  reportError: (error) => ipcRenderer.invoke('report-error', error),
+  saveLog: (logEntry) => ipcRenderer.invoke('save-log', logEntry),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   
-  // Events listeners
+  // Membership & Features
+  getMembershipRestrictions: () => ipcRenderer.invoke('get-membership-restrictions'),
+  checkFeatureAccess: (feature) => ipcRenderer.invoke('check-feature-access', feature),
+  
+  // Notifications
+  showNotification: (options) => ipcRenderer.invoke('show-notification', options),
+  
+  // Certificate export
+  exportCertificatePdf: (certificateData) => ipcRenderer.invoke('export-certificate-pdf', certificateData),
+  
+  // Events listeners - Système d'événements amélioré
   on: (channel, callback) => {
     const validChannels = [
+      // Auth events
+      'auto-login-success',
+      'membership-status-changed',
+      'membership-expiring-soon',
+      
+      // Sync events
       'sync-courses',
-      'logout',
-      'update-progress',
+      'sync-completed',
+      'sync-error',
+      
+      // Download events
       'download-progress',
       'course-downloaded',
-      'sync-completed',
-      'sync-error'
+      
+      // Navigation events
+      'logout',
+      'open-settings',
+      
+      // System events
+      'update-progress',
+      'low-disk-space',
+      'switch-to-offline-mode',
+      'apply-restrictions',
+      'remove-restrictions',
+      
+      // Deep linking
+      'deep-link'
     ];
     
     if (validChannels.includes(channel)) {
       // Remove any existing listeners to prevent memory leaks
       ipcRenderer.removeAllListeners(channel);
       // Add the new listener
-      ipcRenderer.on(channel, (event, ...args) => callback(...args));
+      ipcRenderer.on(channel, (event, ...args) => {
+        try {
+          callback(...args);
+        } catch (error) {
+          console.error(`Error in event handler for ${channel}:`, error);
+        }
+      });
+      
+      return true;
+    } else {
+      console.warn(`Invalid channel: ${channel}`);
+      return false;
     }
   },
   
   off: (channel) => {
     ipcRenderer.removeAllListeners(channel);
+  },
+  
+  // Send events to main process
+  send: (channel, ...args) => {
+    const validOutgoingChannels = [
+      'window-ready',
+      'request-sync',
+      'cancel-download'
+    ];
+    
+    if (validOutgoingChannels.includes(channel)) {
+      ipcRenderer.send(channel, ...args);
+    } else {
+      console.warn(`Invalid outgoing channel: ${channel}`);
+    }
   }
 });
 
@@ -146,11 +210,25 @@ contextBridge.exposeInMainWorld('cryptoUtils', {
   
   // Hash simple pour vérifications
   hash: async (text) => {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(text);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    try {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(text);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (error) {
+      console.error('Error generating hash:', error);
+      return null;
+    }
+  },
+  
+  // Générer un UUID simple
+  uuid: () => {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
   }
 });
 
@@ -164,5 +242,87 @@ contextBridge.exposeInMainWorld('platform', {
     node: process.versions.node,
     chrome: process.versions.chrome,
     electron: process.versions.electron
+  },
+  
+  // Helpers pour le comportement spécifique à la plateforme
+  getKeyboardShortcut: (action) => {
+    const shortcuts = {
+      copy: process.platform === 'darwin' ? 'Cmd+C' : 'Ctrl+C',
+      paste: process.platform === 'darwin' ? 'Cmd+V' : 'Ctrl+V',
+      save: process.platform === 'darwin' ? 'Cmd+S' : 'Ctrl+S',
+      quit: process.platform === 'darwin' ? 'Cmd+Q' : 'Ctrl+Q',
+      settings: process.platform === 'darwin' ? 'Cmd+,' : 'Ctrl+,'
+    };
+    return shortcuts[action] || '';
   }
 });
+
+// Exposer un logger sécurisé
+contextBridge.exposeInMainWorld('Logger', {
+  log: (message, data) => {
+    console.log(`[Renderer] ${message}`, data || '');
+    ipcRenderer.invoke('save-log', {
+      timestamp: new Date().toISOString(),
+      level: 'INFO',
+      message: `${message} ${data ? JSON.stringify(data) : ''}`
+    });
+  },
+  
+  warn: (message, data) => {
+    console.warn(`[Renderer] ${message}`, data || '');
+    ipcRenderer.invoke('save-log', {
+      timestamp: new Date().toISOString(),
+      level: 'WARN',
+      message: `${message} ${data ? JSON.stringify(data) : ''}`
+    });
+  },
+  
+  error: (message, error) => {
+    console.error(`[Renderer] ${message}`, error || '');
+    ipcRenderer.invoke('report-error', {
+      message,
+      error: error?.toString(),
+      timestamp: new Date().toISOString(),
+      stack: error?.stack
+    });
+  },
+  
+  debug: (message, data) => {
+    if (process.env.NODE_ENV === 'development') {
+      console.debug(`[Renderer Debug] ${message}`, data || '');
+    }
+  }
+});
+
+// Debug mode helpers (development only)
+if (process.env.NODE_ENV === 'development') {
+  contextBridge.exposeInMainWorld('DevTools', {
+    // Reload app
+    reload: () => {
+      window.location.reload();
+    },
+    
+    // Clear all data
+    clearData: async () => {
+      await ipcRenderer.invoke('store-clear');
+      await ipcRenderer.invoke('db-cleanup-expired-data');
+      console.log('All data cleared');
+    },
+    
+    // Get app state
+    getState: async () => {
+      return {
+        store: await Promise.all([
+          'token', 'apiUrl', 'username', 'lastSync'
+        ].map(async key => [key, await ipcRenderer.invoke('store-get', key)])),
+        db: await ipcRenderer.invoke('db-get-stats')
+      };
+    }
+  });
+}
+
+// Preload initialization
+console.log('Preload script loaded successfully');
+
+// Send ready signal to main process
+ipcRenderer.send('window-ready');
