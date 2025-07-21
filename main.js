@@ -54,7 +54,43 @@ let membershipCheckInterval = null;
 let maintenanceInterval = null;
 
 const isDev = process.env.NODE_ENV === 'development';
-const deviceId = machineIdSync();
+
+// Fonction robuste pour obtenir le device ID
+function getDeviceId() {
+    try {
+        // Essayer d'obtenir le machine ID natif
+        const deviceId = machineIdSync();
+        
+        // Valider le format
+        if (deviceId && deviceId.length >= 10 && /^[a-f0-9-]+$/i.test(deviceId)) {
+            log.info('Device ID récupéré avec succès:', deviceId.substring(0, 8) + '...');
+            return deviceId;
+        }
+        
+        throw new Error('Device ID invalide');
+    } catch (error) {
+        console.error('Erreur lors de la récupération du machine ID:', error);
+        
+        // Utiliser electron-store pour le stockage persistant
+        const deviceStore = new Store({ name: 'device-config' });
+        
+        // Utiliser un fallback stocké
+        const storedId = deviceStore.get('fallbackDeviceId');
+        if (storedId) {
+            console.log('Utilisation du device ID de fallback');
+            return storedId;
+        }
+        
+        // Générer un nouveau device ID
+        const newId = crypto.randomUUID();
+        deviceStore.set('fallbackDeviceId', newId);
+        console.log('Nouveau device ID généré:', newId);
+        
+        return newId;
+    }
+}
+
+const deviceId = getDeviceId();
 
 // Générer ou récupérer une clé de chiffrement sécurisée
 function getOrCreateEncryptionKey() {
@@ -260,8 +296,6 @@ function cleanOldLogs() {
 
 // ==================== INITIALISATION ====================
 
-// ==================== INITIALISATION ====================
-
 function initializeDatabase() {
     try {
         const dbPath = path.join(app.getPath('userData'), 'database', 'courses.db');
@@ -274,6 +308,7 @@ function initializeDatabase() {
         return Promise.reject(error);
     }
 }
+
 // ==================== CRÉATION DES FENÊTRES ====================
 
 function createSplashWindow() {
@@ -578,6 +613,21 @@ function setupAdditionalIpcHandlers() {
             return { success: false, error: error.message };
         }
     });
+
+    // Vérifier l'accès à une fonctionnalité premium
+    ipcMain.handle('check-premium-feature', (event, feature) => {
+        const restrictions = store.get('membershipRestrictions');
+        if (!restrictions) return true;
+        
+        const premiumFeatures = [
+            'unlimited_downloads',
+            'offline_sync',
+            'certificate_export',
+            'advanced_stats'
+        ];
+        
+        return !premiumFeatures.includes(feature);
+    });
 }
 
 // ==================== SINGLE INSTANCE ====================
@@ -602,10 +652,66 @@ app.whenReady().then(async () => {
         // Valider la configuration
         config.validate();
         
+        // Log des informations système
+        log.info('=== Démarrage de LearnPress Offline ===');
+        log.info('Version:', app.getVersion());
+        log.info('Platform:', process.platform);
+        log.info('Architecture:', process.arch);
+        log.info('Device ID:', deviceId.substring(0, 8) + '...');
+        log.info('User Data Path:', app.getPath('userData'));
+        
         // Initialiser la base de données
         await initializeDatabase();
         
-        // Créer les fenêtres
+        // Vérifier si on doit restaurer la session (avec timeout)
+        const savedToken = store.get('token');
+        const savedRefreshToken = store.get('refreshToken');
+        const savedApiUrl = store.get('apiUrl');
+        
+        if (savedToken && savedRefreshToken && savedApiUrl) {
+            try {
+                // Créer un timeout de 3 secondes pour la restauration de session
+                const sessionRestorePromise = new Promise(async (resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        reject(new Error('Session restore timeout'));
+                    }, 3000);
+                    
+                    try {
+                        apiClient = new LearnPressAPIClient(savedApiUrl, deviceId);
+                        apiClient.token = savedToken;
+                        apiClient.refreshToken = savedRefreshToken;
+                        apiClient.userId = store.get('userId');
+                        
+                        // Vérifier si le token est toujours valide
+                        const result = await apiClient.verifySubscription();
+                        clearTimeout(timeout);
+                        
+                        if (!result.success) {
+                            // Token invalide, nettoyer
+                            store.delete('token');
+                            store.delete('refreshToken');
+                            apiClient = null;
+                            reject(new Error('Invalid token'));
+                        } else {
+                            resolve();
+                        }
+                    } catch (error) {
+                        clearTimeout(timeout);
+                        reject(error);
+                    }
+                });
+                
+                await sessionRestorePromise;
+                log.info('Session restaurée avec succès');
+            } catch (error) {
+                log.warn('Impossible de restaurer la session:', error.message);
+                store.delete('token');
+                store.delete('refreshToken');
+                apiClient = null;
+            }
+        }
+        
+        // Créer les fenêtres (IMPORTANT: toujours exécuté, même si la restauration échoue)
         createSplashWindow();
         createMainWindow();
         createMenu();
@@ -645,13 +751,30 @@ app.whenReady().then(async () => {
         // Gérer le deep linking
         handleDeepLinking();
         
+        // Si une session était restaurée, démarrer la vérification d'abonnement
+        if (apiClient) {
+            startMembershipCheck();
+        }
+        
     } catch (error) {
         log.error('Erreur lors de l\'initialisation:', error);
         await errorHandler.handleError(error, { 
             type: 'initialization',
             fatal: true 
         });
-        app.quit();
+        
+        // Essayer quand même de créer une fenêtre minimale pour afficher l'erreur
+        if (!mainWindow) {
+            mainWindow = new BrowserWindow({
+                width: 800,
+                height: 600,
+                webPreferences: {
+                    nodeIntegration: false,
+                    contextIsolation: true
+                }
+            });
+            mainWindow.loadURL(`data:text/html,<h1>Erreur d'initialisation</h1><p>${error.message}</p>`);
+        }
     }
 });
 
@@ -667,6 +790,24 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
         createMainWindow();
+    }
+});
+
+app.on('before-quit', async () => {
+    log.info('=== Arrêt de LearnPress Offline ===');
+    
+    // Sauvegarder l'état si nécessaire
+    if (apiClient) {
+        store.set('lastShutdown', new Date().toISOString());
+    }
+    
+    // Fermer proprement la base de données
+    if (database) {
+        try {
+            database.close();
+        } catch (error) {
+            log.error('Erreur lors de la fermeture de la base de données:', error);
+        }
     }
 });
 
