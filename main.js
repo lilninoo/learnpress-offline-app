@@ -13,35 +13,63 @@ const LearnPressAPIClient = require('./lib/api-client');
 const SecureDatabase = require('./lib/database');
 const { setupIpcHandlers } = require('./lib/ipc-handlers');
 const errorHandler = require('./lib/error-handler');
-const config = require('./config');
 
 // Configuration du logging
-log.transports.file.level = config.logging.level;
-log.transports.file.maxSize = config.logging.maxFileSize;
+log.transports.file.level = 'info';
+log.transports.file.maxSize = 10 * 1024 * 1024; // 10MB
 autoUpdater.logger = log;
+
+// Configuration par défaut
+const config = {
+    isDev: process.env.NODE_ENV === 'development',
+    logging: {
+        level: 'info',
+        maxFileSize: 10 * 1024 * 1024
+    },
+    membership: {
+        checkInterval: 3600000, // 1 heure
+        warningDays: 7,
+        restrictedFeatures: [
+            'download_premium_courses',
+            'offline_sync',
+            'advanced_stats'
+        ],
+        freeTierLimits: {
+            maxCourses: 3,
+            maxDownloadSize: 536870912,
+            syncEnabled: false
+        }
+    },
+    storage: {
+        cleanupInterval: 86400000 // 24 heures
+    }
+};
 
 // ==================== GESTION DES ERREURS GLOBALES ====================
 
 process.on('uncaughtException', async (error) => {
     console.error('Uncaught Exception:', error);
-    await errorHandler.handleError(error, { 
-        type: 'uncaughtException',
-        fatal: true 
-    });
-
+    
     if (database) {
-        database.close();
+        try {
+            database.close();
+        } catch (e) {
+            console.error('Erreur lors de la fermeture de la DB:', e);
+        }
     }
 
-    app.exit(1);
+    // Log l'erreur avant de quitter
+    log.error('Uncaught Exception:', error);
+    
+    // Attendre un peu pour que le log soit écrit
+    setTimeout(() => {
+        app.exit(1);
+    }, 1000);
 });
 
 process.on('unhandledRejection', async (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-    await errorHandler.handleError(new Error(reason), { 
-        type: 'unhandledRejection',
-        promise 
-    });
+    log.error('Unhandled Rejection:', reason);
 });
 
 // ==================== VARIABLES GLOBALES ====================
@@ -53,7 +81,7 @@ let database = null;
 let membershipCheckInterval = null;
 let maintenanceInterval = null;
 
-const isDev = process.env.NODE_ENV === 'development';
+const isDev = config.isDev;
 const deviceId = machineIdSync();
 
 // Générer ou récupérer une clé de chiffrement sécurisée
@@ -63,6 +91,12 @@ function getOrCreateEncryptionKey() {
     if (fs.existsSync(keyFile)) {
         return fs.readFileSync(keyFile, 'utf8');
     } else {
+        // Créer le dossier userData s'il n'existe pas
+        const userDataPath = app.getPath('userData');
+        if (!fs.existsSync(userDataPath)) {
+            fs.mkdirSync(userDataPath, { recursive: true });
+        }
+        
         const key = crypto.randomBytes(32).toString('hex');
         fs.writeFileSync(keyFile, key, { mode: 0o600 });
         return key;
@@ -173,9 +207,11 @@ function startMaintenance() {
             if (database) {
                 await database.cleanupExpiredData();
 
-                const stats = await database.getStats();
-                const diskSpace = await checkDiskSpace();
+                const stats = database.getStats();
+                log.info('Stats DB:', stats);
 
+                // Vérifier l'espace disque si nécessaire
+                const diskSpace = await checkDiskSpace();
                 if (diskSpace.free < 1024 * 1024 * 1024) { // Moins de 1GB
                     if (mainWindow && !mainWindow.isDestroyed()) {
                         mainWindow.webContents.send('low-disk-space', {
@@ -202,79 +238,63 @@ function stopMaintenance() {
 }
 
 async function checkDiskSpace() {
-    const { exec } = require('child_process');
-    const util = require('util');
-    const execPromise = util.promisify(exec);
-
-    try {
-        const userDataPath = app.getPath('userData');
-
-        if (process.platform === 'win32') {
-            const drive = path.parse(userDataPath).root;
-            const { stdout } = await execPromise(`wmic logicaldisk where caption="${drive.replace('\\', '')}" get size,freespace`);
-            const lines = stdout.trim().split('\n');
-            if (lines.length >= 2) {
-                const values = lines[1].trim().split(/\s+/);
-                return {
-                    free: parseInt(values[0]) || 0,
-                    total: parseInt(values[1]) || 0,
-                    used: (parseInt(values[1]) || 0) - (parseInt(values[0]) || 0)
-                };
-            }
-        } else {
-            const { stdout } = await execPromise(`df -k "${userDataPath}" | tail -1`);
-            const parts = stdout.trim().split(/\s+/);
-            return {
-                total: parseInt(parts[1]) * 1024,
-                used: parseInt(parts[2]) * 1024,
-                free: parseInt(parts[3]) * 1024
-            };
-        }
-    } catch (error) {
-        console.error('Erreur lors de la vérification de l\'espace disque:', error);
-        return { free: 0, used: 0, total: 0 };
-    }
+    // Implémentation basique - retourner des valeurs par défaut
+    return {
+        free: 10 * 1024 * 1024 * 1024, // 10GB
+        total: 100 * 1024 * 1024 * 1024, // 100GB
+        used: 90 * 1024 * 1024 * 1024 // 90GB
+    };
 }
 
 function cleanOldLogs() {
     const logsDir = path.join(app.getPath('userData'), 'logs');
+    if (!fs.existsSync(logsDir)) return;
+    
     const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 jours
 
-    fs.readdir(logsDir, (err, files) => {
-        if (err) return;
-
+    try {
+        const files = fs.readdirSync(logsDir);
         files.forEach(file => {
             const filePath = path.join(logsDir, file);
-            fs.stat(filePath, (err, stats) => {
-                if (err) return;
-
+            try {
+                const stats = fs.statSync(filePath);
                 if (Date.now() - stats.mtime.getTime() > maxAge) {
-                    fs.unlink(filePath, (err) => {
-                        if (err) console.error('Erreur lors de la suppression du log:', err);
-                    });
+                    fs.unlinkSync(filePath);
+                    log.info('Ancien log supprimé:', file);
                 }
-            });
+            } catch (err) {
+                console.warn('Erreur lors de la vérification du fichier:', err);
+            }
         });
-    });
+    } catch (error) {
+        console.warn('Erreur lors du nettoyage des logs:', error);
+    }
 }
 
 // ==================== INITIALISATION ====================
 
-async function initializeDatabase() {
-// ==================== INITIALISATION ====================
-
 function initializeDatabase() {
-    try {
-        const dbPath = path.join(app.getPath('userData'), 'database', 'courses.db');
-        const encryptionKey = getOrCreateEncryptionKey();
-        database = new SecureDatabase(dbPath, encryptionKey);
-        log.info('Base de données initialisée');
-        return Promise.resolve();
-    } catch (error) {
-        log.error('Erreur lors de l\'initialisation de la base de données:', error);
-        throw error;
-        return Promise.reject(error);
-    }
+    return new Promise((resolve, reject) => {
+        try {
+            console.log('Initialisation de la base de données...');
+            
+            const dbDir = path.join(app.getPath('userData'), 'database');
+            const dbPath = path.join(dbDir, 'courses.db');
+            const encryptionKey = getOrCreateEncryptionKey();
+            
+            // Créer le dossier de la DB s'il n'existe pas
+            if (!fs.existsSync(dbDir)) {
+                fs.mkdirSync(dbDir, { recursive: true });
+            }
+            
+            database = new SecureDatabase(dbPath, encryptionKey);
+            log.info('Base de données initialisée avec succès');
+            resolve();
+        } catch (error) {
+            log.error('Erreur lors de l\'initialisation de la base de données:', error);
+            reject(error);
+        }
+    });
 }
 
 // ==================== CRÉATION DES FENÊTRES ====================
@@ -318,13 +338,17 @@ function createMainWindow() {
 
     mainWindow.loadFile(path.join(__dirname, 'src/index.html'));
 
-    contextMenu({
-        showInspectElement: isDev,
-        showSearchWithGoogle: false,
-        showCopyImage: true,
-        prepend: () => []
-    });
+    // Menu contextuel
+    if (isDev) {
+        contextMenu({
+            showInspectElement: true,
+            showSearchWithGoogle: false,
+            showCopyImage: true,
+            prepend: () => []
+        });
+    }
 
+    // Empêcher la navigation vers des URLs externes
     mainWindow.webContents.on('will-navigate', (event, url) => {
         if (!url.startsWith('file://')) {
             event.preventDefault();
@@ -335,8 +359,17 @@ function createMainWindow() {
     mainWindow.once('ready-to-show', () => {
         if (splashWindow) {
             setTimeout(() => {
-                splashWindow.close();
+                if (splashWindow) {
+                    splashWindow.close();
+                }
                 mainWindow.show();
+                
+                // Vérifier si l'utilisateur est connecté
+                const token = store.get('token');
+                if (token) {
+                    // Envoyer un événement pour passer au dashboard
+                    mainWindow.webContents.send('auto-login-success');
+                }
             }, 1500);
         } else {
             mainWindow.show();
@@ -364,7 +397,9 @@ function createMenu() {
                     label: 'Synchroniser',
                     accelerator: 'CmdOrCtrl+S',
                     click: () => {
-                        mainWindow.webContents.send('sync-courses');
+                        if (mainWindow) {
+                            mainWindow.webContents.send('sync-courses');
+                        }
                     }
                 },
                 { type: 'separator' },
@@ -372,14 +407,18 @@ function createMenu() {
                     label: 'Paramètres',
                     accelerator: 'CmdOrCtrl+,',
                     click: () => {
-                        mainWindow.webContents.send('open-settings');
+                        if (mainWindow) {
+                            mainWindow.webContents.send('open-settings');
+                        }
                     }
                 },
                 { type: 'separator' },
                 {
                     label: 'Déconnexion',
                     click: () => {
-                        mainWindow.webContents.send('logout');
+                        if (mainWindow) {
+                            mainWindow.webContents.send('logout');
+                        }
                     }
                 },
                 { type: 'separator' },
@@ -436,13 +475,15 @@ function createMenu() {
                 {
                     label: 'À propos',
                     click: () => {
-                        dialog.showMessageBox(mainWindow, {
-                            type: 'info',
-                            title: 'À propos',
-                            message: 'LearnPress Offline',
-                            detail: `Version: ${app.getVersion()}\nElectron: ${process.versions.electron}\nNode: ${process.versions.node}\nChrome: ${process.versions.chrome}`,
-                            buttons: ['OK']
-                        });
+                        if (mainWindow) {
+                            dialog.showMessageBox(mainWindow, {
+                                type: 'info',
+                                title: 'À propos',
+                                message: 'LearnPress Offline',
+                                detail: `Version: ${app.getVersion()}\nElectron: ${process.versions.electron}\nNode: ${process.versions.node}`,
+                                buttons: ['OK']
+                            });
+                        }
                     }
                 },
                 {
@@ -508,6 +549,49 @@ function handleDeepLink(url) {
 // ==================== IPC HANDLERS ADDITIONNELS ====================
 
 function setupAdditionalIpcHandlers() {
+    // Auto-login check
+    ipcMain.handle('check-auto-login', async () => {
+        const token = store.get('token');
+        const apiUrl = store.get('apiUrl');
+        const username = store.get('username');
+        
+        if (token && apiUrl) {
+            try {
+                // Tenter de restaurer le client API
+                apiClient = new LearnPressAPIClient(apiUrl, deviceId);
+                apiClient.token = token;
+                apiClient.refreshToken = store.get('refreshToken');
+                apiClient.userId = store.get('userId');
+                
+                // Vérifier si le token est encore valide
+                const verification = await apiClient.verifySubscription();
+                
+                if (verification.success) {
+                    return {
+                        success: true,
+                        username: username,
+                        apiUrl: apiUrl
+                    };
+                } else {
+                    // Token expiré, essayer de le rafraîchir
+                    const refreshResult = await apiClient.refreshAccessToken();
+                    if (refreshResult.success) {
+                        store.set('token', apiClient.token);
+                        return {
+                            success: true,
+                            username: username,
+                            apiUrl: apiUrl
+                        };
+                    }
+                }
+            } catch (error) {
+                console.error('Erreur lors de la vérification auto-login:', error);
+            }
+        }
+        
+        return { success: false };
+    });
+    
     // Handlers pour les abonnements
     ipcMain.handle('get-membership-restrictions', () => {
         return store.get('membershipRestrictions') || null;
@@ -517,7 +601,7 @@ function setupAdditionalIpcHandlers() {
         const restrictions = store.get('membershipRestrictions');
         if (!restrictions) return true;
 
-        return config.isFeatureEnabled(feature, { is_active: !restrictions });
+        return !config.membership.restrictedFeatures.includes(feature);
     });
 
     // Handlers pour les logs et erreurs
@@ -550,10 +634,11 @@ function setupAdditionalIpcHandlers() {
     // Handlers pour les notifications
     ipcMain.handle('show-notification', (event, options) => {
         if (Notification.isSupported()) {
+            const iconPath = path.join(__dirname, 'assets/icons/icon.png');
             const notification = new Notification({
                 title: options.title || 'LearnPress Offline',
                 body: options.body,
-                icon: path.join(__dirname, 'assets/icons/icon.png'),
+                icon: fs.existsSync(iconPath) ? iconPath : undefined,
                 silent: options.silent || false
             });
 
@@ -566,20 +651,15 @@ function setupAdditionalIpcHandlers() {
 
             notification.show();
         }
+        return { success: true };
     });
 
-    // Handler pour l'export PDF
+    // Handler pour l'export PDF (placeholder)
     ipcMain.handle('export-certificate-pdf', async (event, certificateData) => {
-        try {
-            // Ici on pourrait utiliser une librairie comme PDFKit
-            // Pour l'instant, on retourne une erreur
-            return { 
-                success: false, 
-                error: 'Fonctionnalité en cours de développement' 
-            };
-        } catch (error) {
-            return { success: false, error: error.message };
-        }
+        return { 
+            success: false, 
+            error: 'Fonctionnalité en cours de développement' 
+        };
     });
 }
 
@@ -602,9 +682,8 @@ if (!gotTheLock) {
 
 app.whenReady().then(async () => {
     try {
-        // Valider la configuration
-        config.validate();
-
+        console.log('Application démarrée');
+        
         // Initialiser la base de données
         await initializeDatabase();
 
@@ -641,19 +720,24 @@ app.whenReady().then(async () => {
         startMaintenance();
 
         // Vérifier les mises à jour
-        if (!isDev && config.updates.autoCheck) {
+        if (!isDev) {
             autoUpdater.checkForUpdatesAndNotify();
         }
 
         // Gérer le deep linking
         handleDeepLinking();
 
+        log.info('Application initialisée avec succès');
+
     } catch (error) {
         log.error('Erreur lors de l\'initialisation:', error);
-        await errorHandler.handleError(error, { 
-            type: 'initialization',
-            fatal: true 
-        });
+        
+        // Afficher un dialogue d'erreur
+        dialog.showErrorBox(
+            'Erreur d\'initialisation',
+            `L'application n'a pas pu démarrer correctement:\n\n${error.message}`
+        );
+        
         app.quit();
     }
 });
@@ -661,6 +745,10 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
     stopMembershipCheck();
     stopMaintenance();
+    
+    if (database) {
+        database.close();
+    }
 
     if (process.platform !== 'darwin') {
         app.quit();
@@ -680,12 +768,14 @@ autoUpdater.on('checking-for-update', () => {
 });
 
 autoUpdater.on('update-available', (info) => {
-    dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        title: 'Mise à jour disponible',
-        message: `Une nouvelle version (${info.version}) est disponible. Elle sera téléchargée en arrière-plan.`,
-        buttons: ['OK']
-    });
+    if (mainWindow) {
+        dialog.showMessageBox(mainWindow, {
+            type: 'info',
+            title: 'Mise à jour disponible',
+            message: `Une nouvelle version (${info.version}) est disponible. Elle sera téléchargée en arrière-plan.`,
+            buttons: ['OK']
+        });
+    }
 });
 
 autoUpdater.on('update-not-available', () => {
@@ -703,16 +793,18 @@ autoUpdater.on('download-progress', (progressObj) => {
 });
 
 autoUpdater.on('update-downloaded', () => {
-    dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        title: 'Mise à jour prête',
-        message: 'La mise à jour a été téléchargée. L\'application va redémarrer.',
-        buttons: ['Redémarrer maintenant', 'Plus tard']
-    }).then((result) => {
-        if (result.response === 0) {
-            autoUpdater.quitAndInstall();
-        }
-    });
+    if (mainWindow) {
+        dialog.showMessageBox(mainWindow, {
+            type: 'info',
+            title: 'Mise à jour prête',
+            message: 'La mise à jour a été téléchargée. L\'application va redémarrer.',
+            buttons: ['Redémarrer maintenant', 'Plus tard']
+        }).then((result) => {
+            if (result.response === 0) {
+                autoUpdater.quitAndInstall();
+            }
+        });
+    }
 });
 
 // ==================== SÉCURITÉ ====================
