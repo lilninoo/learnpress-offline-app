@@ -144,8 +144,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'sync-error',
       
       // Download events
-      'download-progress',
-      'course-downloaded',
+     // Download events
+     'download-progress',
+     'download-completed',
+     'download-error',
+     'download-cancelled',
+     'course-downloaded',
+
       
       // Navigation events
       'logout',
