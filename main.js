@@ -1,3 +1,4 @@
+// main.js - Point d'entrée principal de l'application Electron
 const { app, BrowserWindow, ipcMain, dialog, Menu, shell, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -7,22 +8,19 @@ const log = require('electron-log');
 const { machineIdSync } = require('node-machine-id');
 const contextMenu = require('electron-context-menu');
 const crypto = require('crypto');
-const { SecureMediaPlayer } = require('./lib/secure-media-player');
-let mediaPlayer = null;
-
 
 // Import des modules personnalisés
 const LearnPressAPIClient = require('./lib/api-client');
 const SecureDatabase = require('./lib/database');
 const DownloadManager = require('./lib/download-manager');
-let downloadManager = null;
-
+const { SecureMediaPlayer } = require('./lib/secure-media-player');
 const { setupIpcHandlers } = require('./lib/ipc-handlers');
 const errorHandler = require('./lib/error-handler');
 
 // Configuration du logging
 log.transports.file.level = 'info';
 log.transports.file.maxSize = 10 * 1024 * 1024; // 10MB
+log.transports.file.format = '{y}-{m}-{d} {h}:{i}:{s} {level} {text}';
 autoUpdater.logger = log;
 
 // Configuration par défaut
@@ -31,6 +29,12 @@ const config = {
     logging: {
         level: 'info',
         maxFileSize: 10 * 1024 * 1024
+    },
+    window: {
+        width: 1400,
+        height: 900,
+        minWidth: 1024,
+        minHeight: 768
     },
     membership: {
         checkInterval: 3600000, // 1 heure
@@ -48,34 +52,53 @@ const config = {
     },
     storage: {
         cleanupInterval: 86400000 // 24 heures
+    },
+    sync: {
+        autoSync: true,
+        syncInterval: 1800000, // 30 minutes
+        retryDelay: 60000
     }
 };
 
 // ==================== GESTION DES ERREURS GLOBALES ====================
 
 process.on('uncaughtException', async (error) => {
+    log.error('Uncaught Exception:', error);
     console.error('Uncaught Exception:', error);
     
+    // Essayer de sauvegarder l'état
     if (database) {
         try {
-            database.close();
+            await database.close();
         } catch (e) {
-            console.error('Erreur lors de la fermeture de la DB:', e);
+            log.error('Erreur lors de la fermeture de la DB:', e);
         }
     }
-
-    // Log l'erreur avant de quitter
-    log.error('Uncaught Exception:', error);
     
-    // Attendre un peu pour que le log soit écrit
+    // Afficher un dialogue d'erreur si possible
+    try {
+        dialog.showErrorBox(
+            'Erreur Critique',
+            `Une erreur critique s'est produite:\n${error.message}\n\nL'application va se fermer.`
+        );
+    } catch (e) {
+        // Ignorer si impossible d'afficher le dialogue
+    }
+    
+    // Attendre un peu pour que les logs soient écrits
     setTimeout(() => {
         app.exit(1);
     }, 1000);
 });
 
 process.on('unhandledRejection', async (reason, promise) => {
+    log.error('Unhandled Rejection at:', promise, 'reason:', reason);
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-    log.error('Unhandled Rejection:', reason);
+    
+    // Envoyer l'erreur au error handler
+    if (errorHandler) {
+        await errorHandler.handleError(reason, { type: 'unhandledRejection' });
+    }
 });
 
 // ==================== VARIABLES GLOBALES ====================
@@ -84,8 +107,11 @@ let mainWindow = null;
 let splashWindow = null;
 let apiClient = null;
 let database = null;
+let mediaPlayer = null;
+let downloadManager = null;
 let membershipCheckInterval = null;
 let maintenanceInterval = null;
+let isQuitting = false;
 
 const isDev = config.isDev;
 const deviceId = machineIdSync();
@@ -93,25 +119,42 @@ const deviceId = machineIdSync();
 // Générer ou récupérer une clé de chiffrement sécurisée
 function getOrCreateEncryptionKey() {
     const keyFile = path.join(app.getPath('userData'), '.key');
-
-    if (fs.existsSync(keyFile)) {
-        return fs.readFileSync(keyFile, 'utf8');
-    } else {
+    
+    try {
+        if (fs.existsSync(keyFile)) {
+            const key = fs.readFileSync(keyFile, 'utf8');
+            // Vérifier que la clé est valide
+            if (key && key.length === 64) {
+                return key;
+            }
+        }
+    } catch (error) {
+        log.error('Erreur lors de la lecture de la clé:', error);
+    }
+    
+    // Créer une nouvelle clé
+    const key = crypto.randomBytes(32).toString('hex');
+    
+    try {
         // Créer le dossier userData s'il n'existe pas
         const userDataPath = app.getPath('userData');
         if (!fs.existsSync(userDataPath)) {
             fs.mkdirSync(userDataPath, { recursive: true });
         }
         
-        const key = crypto.randomBytes(32).toString('hex');
+        // Sauvegarder la clé avec permissions restrictives
         fs.writeFileSync(keyFile, key, { mode: 0o600 });
-        return key;
+        log.info('Nouvelle clé de chiffrement créée');
+    } catch (error) {
+        log.error('Erreur lors de la sauvegarde de la clé:', error);
     }
+    
+    return key;
 }
 
 // Store sécurisé pour les données sensibles
 const store = new Store({
-    encryptionKey: getOrCreateEncryptionKey(),
+    encryptionKey: getOrCreateEncryptionKey().substring(0, 32), // Store nécessite exactement 32 caractères
     schema: {
         apiUrl: { type: 'string', default: '' },
         token: { type: 'string', default: '' },
@@ -124,7 +167,8 @@ const store = new Store({
         autoSync: { type: 'boolean', default: true },
         theme: { type: 'string', default: 'auto' },
         language: { type: 'string', default: 'fr' },
-        membershipRestrictions: { type: 'object', default: {} }
+        membershipRestrictions: { type: 'object', default: {} },
+        windowBounds: { type: 'object', default: null }
     }
 });
 
@@ -132,7 +176,7 @@ const store = new Store({
 
 function startMembershipCheck() {
     checkMembershipStatus();
-
+    
     membershipCheckInterval = setInterval(async () => {
         await checkMembershipStatus();
     }, config.membership.checkInterval);
@@ -146,39 +190,47 @@ function stopMembershipCheck() {
 }
 
 async function checkMembershipStatus() {
-    if (!apiClient) return;
-
+    if (!apiClient || !apiClient.token) return;
+    
     try {
         const result = await apiClient.verifySubscription();
-
+        
         if (!result.success || !result.isActive) {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('membership-status-changed', {
-                    isActive: false,
-                    subscription: result.subscription
-                });
-            }
-
-            applyMembershipRestrictions(result.subscription);
+            handleInactiveMembership(result);
         } else {
-            removeMembershipRestrictions();
-
-            if (result.subscription.expires_at) {
-                const expiresAt = new Date(result.subscription.expires_at);
-                const daysUntilExpiry = Math.floor((expiresAt - new Date()) / (1000 * 60 * 60 * 24));
-
-                if (daysUntilExpiry <= config.membership.warningDays && daysUntilExpiry > 0) {
-                    if (mainWindow && !mainWindow.isDestroyed()) {
-                        mainWindow.webContents.send('membership-expiring-soon', {
-                            daysLeft: daysUntilExpiry,
-                            expiresAt: result.subscription.expires_at
-                        });
-                    }
-                }
-            }
+            handleActiveMembership(result);
         }
     } catch (error) {
-        console.error('Erreur lors de la vérification de l\'abonnement:', error);
+        log.error('Erreur lors de la vérification de l\'abonnement:', error);
+    }
+}
+
+function handleInactiveMembership(result) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('membership-status-changed', {
+            isActive: false,
+            subscription: result.subscription
+        });
+    }
+    
+    applyMembershipRestrictions(result.subscription);
+}
+
+function handleActiveMembership(result) {
+    removeMembershipRestrictions();
+    
+    if (result.subscription?.expires_at) {
+        const expiresAt = new Date(result.subscription.expires_at);
+        const daysUntilExpiry = Math.floor((expiresAt - new Date()) / (1000 * 60 * 60 * 24));
+        
+        if (daysUntilExpiry <= config.membership.warningDays && daysUntilExpiry > 0) {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('membership-expiring-soon', {
+                    daysLeft: daysUntilExpiry,
+                    expiresAt: result.subscription.expires_at
+                });
+            }
+        }
     }
 }
 
@@ -189,9 +241,9 @@ function applyMembershipRestrictions(subscription) {
         maxCourses: config.membership.freeTierLimits.maxCourses,
         maxDownloadSize: config.membership.freeTierLimits.maxDownloadSize
     };
-
+    
     store.set('membershipRestrictions', restrictions);
-
+    
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('apply-restrictions', restrictions);
     }
@@ -199,7 +251,7 @@ function applyMembershipRestrictions(subscription) {
 
 function removeMembershipRestrictions() {
     store.delete('membershipRestrictions');
-
+    
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('remove-restrictions');
     }
@@ -208,31 +260,11 @@ function removeMembershipRestrictions() {
 // ==================== NETTOYAGE ET MAINTENANCE ====================
 
 function startMaintenance() {
+    // Exécuter immédiatement puis périodiquement
+    performMaintenance();
+    
     maintenanceInterval = setInterval(async () => {
-        try {
-            if (database) {
-                await database.cleanupExpiredData();
-
-                const stats = database.getStats();
-                log.info('Stats DB:', stats);
-
-                // Vérifier l'espace disque si nécessaire
-                const diskSpace = await checkDiskSpace();
-                if (diskSpace.free < 1024 * 1024 * 1024) { // Moins de 1GB
-                    if (mainWindow && !mainWindow.isDestroyed()) {
-                        mainWindow.webContents.send('low-disk-space', {
-                            free: diskSpace.free,
-                            used: diskSpace.used
-                        });
-                    }
-                }
-            }
-
-            cleanOldLogs();
-
-        } catch (error) {
-            console.error('Erreur lors de la maintenance:', error);
-        }
+        await performMaintenance();
     }, config.storage.cleanupInterval);
 }
 
@@ -243,13 +275,58 @@ function stopMaintenance() {
     }
 }
 
+async function performMaintenance() {
+    try {
+        log.info('Début de la maintenance périodique');
+        
+        // Nettoyer les données expirées
+        if (database && database.isInitialized) {
+            await database.cleanupExpiredData();
+            
+            const stats = database.getStats();
+            log.info('Stats DB:', stats);
+        }
+        
+        // Nettoyer les vieux logs
+        cleanOldLogs();
+        
+        // Vérifier l'espace disque
+        const diskSpace = await checkDiskSpace();
+        if (diskSpace.free < 1024 * 1024 * 1024) { // Moins de 1GB
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('low-disk-space', {
+                    free: diskSpace.free,
+                    used: diskSpace.used
+                });
+            }
+        }
+        
+        log.info('Maintenance périodique terminée');
+    } catch (error) {
+        log.error('Erreur lors de la maintenance:', error);
+    }
+}
+
 async function checkDiskSpace() {
-    // Implémentation basique - retourner des valeurs par défaut
-    return {
-        free: 10 * 1024 * 1024 * 1024, // 10GB
-        total: 100 * 1024 * 1024 * 1024, // 100GB
-        used: 90 * 1024 * 1024 * 1024 // 90GB
-    };
+    try {
+        // Utiliser require dynamique pour éviter les erreurs si le module n'existe pas
+        const checkDiskSpace = require('check-disk-space').default;
+        const userDataPath = app.getPath('userData');
+        const diskSpace = await checkDiskSpace(userDataPath);
+        
+        return {
+            free: diskSpace.free,
+            total: diskSpace.size,
+            used: diskSpace.size - diskSpace.free
+        };
+    } catch (error) {
+        // Retourner des valeurs par défaut si le module n'est pas disponible
+        return {
+            free: 10 * 1024 * 1024 * 1024, // 10GB
+            total: 100 * 1024 * 1024 * 1024, // 100GB
+            used: 90 * 1024 * 1024 * 1024 // 90GB
+        };
+    }
 }
 
 function cleanOldLogs() {
@@ -257,32 +334,57 @@ function cleanOldLogs() {
     if (!fs.existsSync(logsDir)) return;
     
     const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 jours
-
+    const now = Date.now();
+    
     try {
         const files = fs.readdirSync(logsDir);
         files.forEach(file => {
             const filePath = path.join(logsDir, file);
             try {
                 const stats = fs.statSync(filePath);
-                if (Date.now() - stats.mtime.getTime() > maxAge) {
+                if (now - stats.mtime.getTime() > maxAge) {
                     fs.unlinkSync(filePath);
                     log.info('Ancien log supprimé:', file);
                 }
             } catch (err) {
-                console.warn('Erreur lors de la vérification du fichier:', err);
+                log.warn('Erreur lors de la vérification du fichier:', err);
             }
         });
     } catch (error) {
-        console.warn('Erreur lors du nettoyage des logs:', error);
+        log.warn('Erreur lors du nettoyage des logs:', error);
     }
 }
 
 // ==================== INITIALISATION ====================
 
-function initializeDatabase() {
+async function initializeApp() {
+    try {
+        log.info('Initialisation de l\'application...');
+        
+        // Initialiser la base de données
+        await initializeDatabase();
+        
+        // Initialiser le lecteur média sécurisé
+        await initializeMediaPlayer();
+        
+        // Créer le gestionnaire de téléchargement
+        await initializeDownloadManager();
+        
+        // Démarrer la maintenance
+        startMaintenance();
+        
+        log.info('Application initialisée avec succès');
+        
+    } catch (error) {
+        log.error('Erreur lors de l\'initialisation:', error);
+        throw error;
+    }
+}
+
+async function initializeDatabase() {
     return new Promise((resolve, reject) => {
         try {
-            console.log('Initialisation de la base de données...');
+            log.info('Initialisation de la base de données...');
             
             const dbDir = path.join(app.getPath('userData'), 'database');
             const dbPath = path.join(dbDir, 'courses.db');
@@ -294,13 +396,56 @@ function initializeDatabase() {
             }
             
             database = new SecureDatabase(dbPath, encryptionKey);
+            
+            // Vérifier que la DB est bien initialisée
+            if (!database.isInitialized) {
+                throw new Error('La base de données n\'a pas pu être initialisée');
+            }
+            
             log.info('Base de données initialisée avec succès');
             resolve();
+            
         } catch (error) {
             log.error('Erreur lors de l\'initialisation de la base de données:', error);
             reject(error);
         }
     });
+}
+
+async function initializeMediaPlayer() {
+    try {
+        log.info('Initialisation du lecteur média sécurisé...');
+        
+        const encryptionKey = getOrCreateEncryptionKey();
+        mediaPlayer = new SecureMediaPlayer(encryptionKey);
+        await mediaPlayer.initialize();
+        
+        log.info('Lecteur média initialisé avec succès');
+        
+    } catch (error) {
+        log.error('Erreur lors de l\'initialisation du lecteur média:', error);
+        // Non critique - continuer sans le lecteur
+        mediaPlayer = null;
+    }
+}
+
+async function initializeDownloadManager() {
+    try {
+        log.info('Initialisation du gestionnaire de téléchargement...');
+        
+        if (!database) {
+            throw new Error('Database non initialisée');
+        }
+        
+        const encryption = require('./lib/encryption');
+        downloadManager = new DownloadManager(database, encryption, apiClient);
+        
+        log.info('Gestionnaire de téléchargement initialisé');
+        
+    } catch (error) {
+        log.error('Erreur lors de l\'initialisation du download manager:', error);
+        downloadManager = null;
+    }
 }
 
 // ==================== CRÉATION DES FENÊTRES ====================
@@ -312,48 +457,57 @@ function createSplashWindow() {
         frame: false,
         alwaysOnTop: true,
         transparent: true,
+        resizable: false,
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true
         }
     });
-
+    
     splashWindow.loadFile(path.join(__dirname, 'src/splash.html'));
-
+    
     splashWindow.on('closed', () => {
         splashWindow = null;
     });
 }
 
 function createMainWindow() {
+    // Restaurer les dimensions de la fenêtre
+    const windowBounds = store.get('windowBounds');
+    
     mainWindow = new BrowserWindow({
-        width: 1400,
-        height: 900,
-        minWidth: 1024,
-        minHeight: 768,
+        width: windowBounds?.width || config.window.width,
+        height: windowBounds?.height || config.window.height,
+        x: windowBounds?.x,
+        y: windowBounds?.y,
+        minWidth: config.window.minWidth,
+        minHeight: config.window.minHeight,
         show: false,
         icon: path.join(__dirname, 'assets/icons/icon.png'),
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
             preload: path.join(__dirname, 'preload.js'),
-            webSecurity: !isDev
+            webSecurity: !isDev,
+            // Permissions
+            allowRunningInsecureContent: false,
+            experimentalFeatures: false,
+            navigateOnDragDrop: false
         },
         titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default'
     });
-
+    
     mainWindow.loadFile(path.join(__dirname, 'src/index.html'));
-
+    
     // Menu contextuel
-    if (isDev) {
-        contextMenu({
-            showInspectElement: true,
-            showSearchWithGoogle: false,
-            showCopyImage: true,
-            prepend: () => []
-        });
-    }
-
+    contextMenu({
+        window: mainWindow,
+        showInspectElement: isDev,
+        showSearchWithGoogle: false,
+        showCopyImage: true,
+        prepend: () => []
+    });
+    
     // Empêcher la navigation vers des URLs externes
     mainWindow.webContents.on('will-navigate', (event, url) => {
         if (!url.startsWith('file://')) {
@@ -361,11 +515,24 @@ function createMainWindow() {
             shell.openExternal(url);
         }
     });
-
+    
+    // Empêcher l'ouverture de nouvelles fenêtres
+    mainWindow.webContents.setWindowOpenHandler(() => {
+        return { action: 'deny' };
+    });
+    
+    // Gérer le certificat invalide en dev
+    if (isDev) {
+        mainWindow.webContents.on('certificate-error', (event, url, error, certificate, callback) => {
+            event.preventDefault();
+            callback(true);
+        });
+    }
+    
     mainWindow.once('ready-to-show', () => {
-        if (splashWindow) {
+        if (splashWindow && !splashWindow.isDestroyed()) {
             setTimeout(() => {
-                if (splashWindow) {
+                if (splashWindow && !splashWindow.isDestroyed()) {
                     splashWindow.close();
                 }
                 mainWindow.show();
@@ -373,7 +540,6 @@ function createMainWindow() {
                 // Vérifier si l'utilisateur est connecté
                 const token = store.get('token');
                 if (token) {
-                    // Envoyer un événement pour passer au dashboard
                     mainWindow.webContents.send('auto-login-success');
                 }
             }, 1500);
@@ -381,14 +547,25 @@ function createMainWindow() {
             mainWindow.show();
         }
     });
-
-    mainWindow.on('closed', () => {
-        mainWindow = null;
-        if (database) {
-            database.close();
+    
+    // Sauvegarder la position de la fenêtre
+    mainWindow.on('close', (event) => {
+        if (!isQuitting && process.platform === 'darwin') {
+            event.preventDefault();
+            mainWindow.hide();
+            return;
+        }
+        
+        if (!mainWindow.isDestroyed()) {
+            const bounds = mainWindow.getBounds();
+            store.set('windowBounds', bounds);
         }
     });
-
+    
+    mainWindow.on('closed', () => {
+        mainWindow = null;
+    });
+    
     if (isDev) {
         mainWindow.webContents.openDevTools();
     }
@@ -463,6 +640,13 @@ function createMenu() {
             ]
         },
         {
+            label: 'Fenêtre',
+            submenu: [
+                { role: 'minimize', label: 'Réduire' },
+                { role: 'close', label: 'Fermer' }
+            ]
+        },
+        {
             label: 'Aide',
             submenu: [
                 {
@@ -479,6 +663,14 @@ function createMenu() {
                 },
                 { type: 'separator' },
                 {
+                    label: 'Afficher les logs',
+                    click: () => {
+                        const logPath = log.transports.file.getFile().path;
+                        shell.showItemInFolder(logPath);
+                    }
+                },
+                { type: 'separator' },
+                {
                     label: 'À propos',
                     click: () => {
                         if (mainWindow) {
@@ -486,7 +678,7 @@ function createMenu() {
                                 type: 'info',
                                 title: 'À propos',
                                 message: 'LearnPress Offline',
-                                detail: `Version: ${app.getVersion()}\nElectron: ${process.versions.electron}\nNode: ${process.versions.node}`,
+                                detail: `Version: ${app.getVersion()}\nElectron: ${process.versions.electron}\nNode: ${process.versions.node}\nChrome: ${process.versions.chrome}`,
                                 buttons: ['OK']
                             });
                         }
@@ -501,38 +693,69 @@ function createMenu() {
             ]
         }
     ];
-
+    
+    // Menu spécifique macOS
     if (process.platform === 'darwin') {
         template.unshift({
             label: app.getName(),
             submenu: [
-                { role: 'about' },
+                { role: 'about', label: 'À propos de LearnPress Offline' },
                 { type: 'separator' },
-                { role: 'services', submenu: [] },
+                {
+                    label: 'Préférences...',
+                    accelerator: 'Cmd+,',
+                    click: () => {
+                        if (mainWindow) {
+                            mainWindow.webContents.send('open-settings');
+                        }
+                    }
+                },
                 { type: 'separator' },
-                { role: 'hide' },
-                { role: 'hideothers' },
-                { role: 'unhide' },
+                { role: 'services', label: 'Services', submenu: [] },
                 { type: 'separator' },
-                { role: 'quit' }
+                { role: 'hide', label: 'Masquer LearnPress Offline' },
+                { role: 'hideothers', label: 'Masquer les autres' },
+                { role: 'unhide', label: 'Tout afficher' },
+                { type: 'separator' },
+                { role: 'quit', label: 'Quitter LearnPress Offline' }
             ]
         });
+        
+        // Ajuster le menu Fenêtre pour macOS
+        const windowMenuIndex = template.findIndex(m => m.label === 'Fenêtre');
+        if (windowMenuIndex !== -1) {
+            template[windowMenuIndex].submenu = [
+                { role: 'minimize', label: 'Réduire' },
+                { role: 'zoom', label: 'Zoom' },
+                { type: 'separator' },
+                { role: 'front', label: 'Tout ramener au premier plan' }
+            ];
+        }
     }
-
+    
     const menu = Menu.buildFromTemplate(template);
     Menu.setApplicationMenu(menu);
 }
 
 // ==================== DEEP LINKING ====================
 
-function handleDeepLinking() {
-    app.setAsDefaultProtocolClient('learnpress');
-
+function setupDeepLinking() {
+    // Enregistrer le protocole
+    if (process.defaultApp) {
+        if (process.argv.length >= 2) {
+            app.setAsDefaultProtocolClient('learnpress', process.execPath, [path.resolve(process.argv[1])]);
+        }
+    } else {
+        app.setAsDefaultProtocolClient('learnpress');
+    }
+    
+    // Gérer les liens sur Windows
     const deeplinkingUrl = process.argv.find((arg) => arg.startsWith('learnpress://'));
     if (deeplinkingUrl) {
         handleDeepLink(deeplinkingUrl);
     }
-
+    
+    // Gérer les liens sur macOS
     app.on('open-url', (event, url) => {
         event.preventDefault();
         handleDeepLink(url);
@@ -540,15 +763,21 @@ function handleDeepLinking() {
 }
 
 function handleDeepLink(url) {
-    const urlParts = url.replace('learnpress://', '').split('/');
-    const type = urlParts[0];
-    const id = urlParts[1];
-
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('deep-link', { type, id });
-
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.focus();
+    log.info('Deep link reçu:', url);
+    
+    try {
+        const urlParts = url.replace('learnpress://', '').split('/');
+        const type = urlParts[0];
+        const id = urlParts[1];
+        
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('deep-link', { type, id });
+            
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.focus();
+        }
+    } catch (error) {
+        log.error('Erreur lors du traitement du deep link:', error);
     }
 }
 
@@ -557,12 +786,22 @@ function handleDeepLink(url) {
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
+    log.info('Une autre instance est déjà en cours d\'exécution');
     app.quit();
 } else {
-    app.on('second-instance', () => {
+    app.on('second-instance', (event, commandLine, workingDirectory) => {
+        log.info('Tentative de lancer une seconde instance');
+        
+        // Si une fenêtre existe, la mettre au premier plan
         if (mainWindow) {
             if (mainWindow.isMinimized()) mainWindow.restore();
             mainWindow.focus();
+        }
+        
+        // Gérer les deep links de la seconde instance
+        const deeplinkingUrl = commandLine.find((arg) => arg.startsWith('learnpress://'));
+        if (deeplinkingUrl) {
+            handleDeepLink(deeplinkingUrl);
         }
     });
 }
@@ -570,97 +809,134 @@ if (!gotTheLock) {
 // ==================== APP LIFECYCLE ====================
 
 // Désactiver l'accélération GPU si problèmes
-app.commandLine.appendSwitch('disable-gpu');
-app.commandLine.appendSwitch('disable-software-rasterizer');
+if (!isDev) {
+    app.disableHardwareAcceleration();
+}
 
 // Mode développement
-if (process.env.NODE_ENV === 'development') {
+if (isDev) {
     app.commandLine.appendSwitch('ignore-certificate-errors');
+    app.commandLine.appendSwitch('allow-insecure-localhost', 'true');
 }
 
 app.whenReady().then(async () => {
     try {
-        console.log('Application démarrée');
+        log.info('=== Application démarrée ===');
+        log.info(`Version: ${app.getVersion()}`);
+        log.info(`Electron: ${process.versions.electron}`);
+        log.info(`Node: ${process.versions.node}`);
+        log.info(`Platform: ${process.platform} ${process.arch}`);
         
-        // Initialiser la base de données
-        await initializeDatabase();
-		// Initialiser le lecteur média sécurisé
-		const encryptionKey = getOrCreateEncryptionKey(); // si pas déjà défini
-		mediaPlayer = new SecureMediaPlayer(encryptionKey);
-		await mediaPlayer.initialize();
-		
-	// Créer le gestionnaire de téléchargement après l'init de la DB
-		const encryption = { key: encryptionKey }; // si tu as un vrai module, adapte
-		downloadManager = new DownloadManager(database, encryption, apiClient);
-
-
+        // Initialiser l'application
+        await initializeApp();
+        
         // Créer les fenêtres
         createSplashWindow();
         createMainWindow();
         createMenu();
-
+        
         // Configurer les gestionnaires IPC
-		setupIpcHandlers(ipcMain, {
-			store,
-			deviceId,
-			app,
-			dialog,
-			mainWindow,
-			getApiClient: () => apiClient,
-			setApiClient: (client) => { 
-				apiClient = client;
-				if (client) {
-					startMembershipCheck();
-				} else {
-					stopMembershipCheck();
-				}
-			},
-			getDatabase: () => database,
-			getDownloadManager: () => downloadManager, // ✅ AJOUT
-			getMediaPlayer: () => mediaPlayer,
-			errorHandler,
-			config
-		});
-
-
-        // Démarrer la maintenance
-        startMaintenance();
-
-        // Vérifier les mises à jour
+        setupIpcHandlers(ipcMain, {
+            store,
+            deviceId,
+            app,
+            dialog,
+            mainWindow,
+            getApiClient: () => apiClient,
+            setApiClient: (client) => {
+                apiClient = client;
+                
+                // Mettre à jour le download manager avec le nouveau client
+                if (downloadManager) {
+                    downloadManager.apiClient = client;
+                }
+                
+                // Gérer les checks d'abonnement
+                if (client && client.token) {
+                    startMembershipCheck();
+                } else {
+                    stopMembershipCheck();
+                }
+            },
+            getDatabase: () => database,
+            getDownloadManager: () => downloadManager,
+            getMediaPlayer: () => mediaPlayer,
+            errorHandler,
+            config
+        });
+        
+        // Gérer le deep linking
+        setupDeepLinking();
+        
+        // Vérifier les mises à jour en production
         if (!isDev) {
             autoUpdater.checkForUpdatesAndNotify();
         }
-
-        // Gérer le deep linking
-        handleDeepLinking();
-
+        
         log.info('Application initialisée avec succès');
-
+        
     } catch (error) {
-        log.error('Erreur lors de l\'initialisation:', error);
+        log.error('Erreur critique lors de l\'initialisation:', error);
         
         // Afficher un dialogue d'erreur
         dialog.showErrorBox(
             'Erreur d\'initialisation',
-            `L'application n'a pas pu démarrer correctement:\n\n${error.message}`
+            `L'application n'a pas pu démarrer correctement:\n\n${error.message}\n\nVeuillez consulter les logs pour plus de détails.`
         );
         
         app.quit();
     }
 });
 
-app.on('window-all-closed', async () => {
-    stopMembershipCheck();
-    stopMaintenance();
-    
-    if (database) {
-        database.close();
+app.on('before-quit', (event) => {
+    if (!isQuitting) {
+        event.preventDefault();
+        isQuitting = true;
+        
+        // Nettoyer avant de quitter
+        cleanupBeforeQuit().then(() => {
+            app.quit();
+        });
     }
-	
-	if (mediaPlayer) {
-		await mediaPlayer.cleanup();
-	}
-		if (process.platform !== 'darwin') {
+});
+
+async function cleanupBeforeQuit() {
+    log.info('Nettoyage avant fermeture...');
+    
+    try {
+        // Arrêter les intervals
+        stopMembershipCheck();
+        stopMaintenance();
+        
+        // Fermer la base de données
+        if (database && database.isInitialized) {
+            await database.close();
+            log.info('Base de données fermée');
+        }
+        
+        // Nettoyer le media player
+        if (mediaPlayer) {
+            await mediaPlayer.cleanup();
+            log.info('Media player nettoyé');
+        }
+        
+        // Déconnecter l'API
+        if (apiClient && apiClient.token) {
+            try {
+                await apiClient.logout();
+            } catch (error) {
+                log.warn('Erreur lors de la déconnexion API:', error);
+            }
+        }
+        
+        log.info('Nettoyage terminé');
+    } catch (error) {
+        log.error('Erreur lors du nettoyage:', error);
+    }
+}
+
+app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
         app.quit();
     }
 });
@@ -668,6 +944,8 @@ app.on('window-all-closed', async () => {
 app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
         createMainWindow();
+    } else if (mainWindow) {
+        mainWindow.show();
     }
 });
 
@@ -678,18 +956,21 @@ autoUpdater.on('checking-for-update', () => {
 });
 
 autoUpdater.on('update-available', (info) => {
+    log.info('Mise à jour disponible:', info.version);
+    
     if (mainWindow) {
-        dialog.showMessageBox(mainWindow, {
-            type: 'info',
+        const notification = new Notification({
             title: 'Mise à jour disponible',
-            message: `Une nouvelle version (${info.version}) est disponible. Elle sera téléchargée en arrière-plan.`,
-            buttons: ['OK']
+            body: `Une nouvelle version (${info.version}) est disponible. Elle sera téléchargée en arrière-plan.`,
+            icon: path.join(__dirname, 'assets/icons/icon.png')
         });
+        
+        notification.show();
     }
 });
 
 autoUpdater.on('update-not-available', () => {
-    log.info('Aucune mise à jour disponible.');
+    log.info('Aucune mise à jour disponible');
 });
 
 autoUpdater.on('error', (err) => {
@@ -697,20 +978,23 @@ autoUpdater.on('error', (err) => {
 });
 
 autoUpdater.on('download-progress', (progressObj) => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('update-progress', progressObj);
     }
 });
 
 autoUpdater.on('update-downloaded', () => {
+    log.info('Mise à jour téléchargée');
+    
     if (mainWindow) {
         dialog.showMessageBox(mainWindow, {
             type: 'info',
             title: 'Mise à jour prête',
-            message: 'La mise à jour a été téléchargée. L\'application va redémarrer.',
+            message: 'La mise à jour a été téléchargée. L\'application va redémarrer pour l\'installer.',
             buttons: ['Redémarrer maintenant', 'Plus tard']
         }).then((result) => {
             if (result.response === 0) {
+                isQuitting = true;
                 autoUpdater.quitAndInstall();
             }
         });
@@ -720,27 +1004,41 @@ autoUpdater.on('update-downloaded', () => {
 // ==================== SÉCURITÉ ====================
 
 app.on('web-contents-created', (event, contents) => {
+    // Empêcher l'ouverture de nouvelles fenêtres
     contents.on('new-window', (event, navigationUrl) => {
         event.preventDefault();
         shell.openExternal(navigationUrl);
     });
-
+    
+    // Configurer les headers de sécurité
     contents.session.webRequest.onHeadersReceived((details, callback) => {
         callback({
             responseHeaders: {
                 ...details.responseHeaders,
                 'Content-Security-Policy': [
-                    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src 'self' file:; font-src 'self' data:;"
-                ]
+                    "default-src 'self'; " +
+                    "script-src 'self' 'unsafe-inline'; " +
+                    "style-src 'self' 'unsafe-inline'; " +
+                    "img-src 'self' data: https:; " +
+                    "media-src 'self' file: http://127.0.0.1:*; " +
+                    "font-src 'self' data:; " +
+                    "connect-src 'self' https: http://127.0.0.1:*"
+                ],
+                'X-Content-Type-Options': ['nosniff'],
+                'X-Frame-Options': ['DENY'],
+                'X-XSS-Protection': ['1; mode=block']
             }
         });
     });
 });
 
-// Désactiver la sécurité en dev seulement
-if (isDev) {
-    app.commandLine.appendSwitch('ignore-certificate-errors');
-}
+// ==================== EXPORTS POUR TESTS ====================
 
-// Export pour les tests
-module.exports = { app, store };
+if (process.env.NODE_ENV === 'test') {
+    module.exports = {
+        app,
+        store,
+        createMainWindow,
+        initializeApp
+    };
+}
