@@ -48,35 +48,41 @@
     "pack": "electron-builder --dir",
     "build-win": "electron-builder --win --x64",
     "build-mac": "electron-builder --mac --universal",
-    "build-linux": "electron-builder --linux --x64"
+    "build-linux": "electron-builder --linux --x64",
+    "test-startup": "node test-startup.js",
+    "clean-auth": "node scripts/clean-auth.js",
+    "clean-all": "node scripts/clean-auth.js --full"
+
   },
   "engines": {
     "node": ">=16.0.0",
     "npm": ">=7.0.0"
   },
   "devDependencies": {
+    "@electron/notarize": "^2.1.0",
+    "chai": "^4.3.10",
     "electron": "^27.0.0",
     "electron-builder": "^24.6.4",
-    "eslint": "^8.50.0",
-    "mocha": "^10.2.0",
-    "chai": "^4.3.10",
-    "sinon": "^17.0.0",
-    "nyc": "^15.1.0",
-    "jsdom": "^23.0.0",
-    "@electron/notarize": "^2.1.0",
     "electron-devtools-installer": "^3.2.0",
-    "spectron": "^19.0.0",
-    "electron-rebuild": "^3.2.9"
+    "electron-rebuild": "^3.2.9",
+    "eslint": "^8.50.0",
+    "jsdom": "^23.0.0",
+    "mocha": "^10.2.0",
+    "nyc": "^15.1.0",
+    "sinon": "^17.0.0",
+    "spectron": "^19.0.0"
   },
   "dependencies": {
     "axios": "^1.5.0",
     "better-sqlite3": "^8.7.0",
+    "electron-context-menu": "^3.6.1",
+    "electron-log": "^5.0.0",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.1.4",
-    "electron-log": "^5.0.0",
+    "express": "^5.1.0",
+    "form-data": "^4.0.4",
     "node-machine-id": "^1.1.12",
-    "electron-context-menu": "^3.6.1",
-    "form-data": "^4.0.0"
+    "uuid": "^11.1.0"
   },
   "build": {
     "appId": "com.teachmemore.learnpress-offline",
@@ -122,11 +128,17 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         },
         {
           "target": "zip",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "type": "distribution",
@@ -151,7 +163,10 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64", "ia32"]
+          "arch": [
+            "x64",
+            "ia32"
+          ]
         },
         {
           "target": "portable"
@@ -179,7 +194,9 @@
       "target": [
         {
           "target": "AppImage",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "deb"
@@ -201,7 +218,9 @@
     "protocols": [
       {
         "name": "LearnPress Protocol",
-        "schemes": ["learnpress"]
+        "schemes": [
+          "learnpress"
+        ]
       }
     ],
     "fileAssociations": [
