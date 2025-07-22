@@ -569,6 +569,15 @@ if (!gotTheLock) {
 
 // ==================== APP LIFECYCLE ====================
 
+// Désactiver l'accélération GPU si problèmes
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('disable-software-rasterizer');
+
+// Mode développement
+if (process.env.NODE_ENV === 'development') {
+    app.commandLine.appendSwitch('ignore-certificate-errors');
+}
+
 app.whenReady().then(async () => {
     try {
         console.log('Application démarrée');
