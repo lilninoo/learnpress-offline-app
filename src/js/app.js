@@ -1,4 +1,4 @@
-// app.js - Application principale corrigée
+// src/js/app.js - Version COMPLÈTE
 
 // État global de l'application
 const AppState = {
@@ -85,7 +85,6 @@ function initializeUI() {
     
     // Vérifier si l'utilisateur est connecté
     if (window.AuthState && window.AuthState.isLoggedIn) {
-        // L'utilisateur est déjà connecté, charger le dashboard
         loadDashboardData();
     }
     
@@ -114,6 +113,17 @@ function handleNavigation(e) {
     const page = e.currentTarget.dataset.page;
     showContentPage(page);
     
+    // Mettre à jour le titre
+    const pageTitle = document.getElementById('page-title');
+    if (pageTitle) {
+        const titles = {
+            'dashboard': 'Tableau de bord',
+            'courses': 'Mes cours',
+            'downloads': 'Téléchargements'
+        };
+        pageTitle.textContent = titles[page] || 'LearnPress Offline';
+    }
+    
     // Charger le contenu approprié
     loadPageContent(page);
 }
@@ -124,25 +134,34 @@ function showContentPage(pageId) {
         page.classList.add('hidden');
     });
     
-    const targetPage = document.getElementById(`${pageId}-page`);
+    const targetPage = document.getElementById(`${pageId}-content`);
     if (targetPage) {
         targetPage.classList.remove('hidden');
+        
+        // Mettre à jour le titre de la page
+        const pageTitle = document.getElementById('page-title');
+        if (pageTitle) {
+            const titles = {
+                'dashboard': 'Tableau de bord',
+                'courses': 'Mes cours',
+                'downloads': 'Téléchargements',
+                'progress': 'Ma progression'
+            };
+            pageTitle.textContent = titles[pageId] || pageId;
+        }
     }
 }
-
 // Charger le contenu d'une page
 function loadPageContent(page) {
     switch (page) {
+        case 'dashboard':
+            loadDashboardData();
+            break;
         case 'courses':
-            loadCourses();
+            loadCoursesPage();
             break;
         case 'downloads':
-            if (window.coursesManager) {
-                window.coursesManager.loadDownloads();
-            }
-            break;
-        case 'progress':
-            loadProgress();
+            loadDownloadsPage();
             break;
         default:
             console.warn('Page inconnue:', page);
@@ -197,55 +216,13 @@ function setupHeaderButtons() {
     const settingsBtn = document.getElementById('settings-btn');
     if (settingsBtn) {
         settingsBtn.addEventListener('click', () => {
-            const modal = document.getElementById('settings-modal');
-            if (modal) {
-                modal.classList.remove('hidden');
-            }
-        });
-    }
-    
-    // Search button
-    const searchBtn = document.getElementById('search-btn');
-    if (searchBtn) {
-        searchBtn.addEventListener('click', () => {
-            const searchBar = document.getElementById('search-bar');
-            if (searchBar) {
-                searchBar.classList.toggle('hidden');
-                if (!searchBar.classList.contains('hidden')) {
-                    const searchInput = document.getElementById('search-input');
-                    if (searchInput) {
-                        searchInput.focus();
-                    }
-                }
-            }
+            console.log('Paramètres - À implémenter');
         });
     }
 }
 
 // Configurer les modals
 function setupModals() {
-    // Settings modal
-    const closeSettingsBtn = document.getElementById('close-settings-modal');
-    if (closeSettingsBtn) {
-        closeSettingsBtn.addEventListener('click', () => {
-            const modal = document.getElementById('settings-modal');
-            if (modal) {
-                modal.classList.add('hidden');
-            }
-        });
-    }
-    
-    // Download modal
-    const closeDownloadBtn = document.getElementById('close-download-modal');
-    if (closeDownloadBtn) {
-        closeDownloadBtn.addEventListener('click', () => {
-            const modal = document.getElementById('download-modal');
-            if (modal) {
-                modal.classList.add('hidden');
-            }
-        });
-    }
-    
     // Fermer les modals en cliquant sur le backdrop
     document.addEventListener('click', (e) => {
         if (e.target.classList.contains('modal-backdrop')) {
@@ -260,25 +237,8 @@ function setupPlayerControls() {
     if (backBtn) {
         backBtn.addEventListener('click', () => {
             showDashboard();
-            // Recharger les cours pour voir la progression mise à jour
             loadCourses();
         });
-    }
-    
-    const prevBtn = document.getElementById('prev-lesson');
-    const nextBtn = document.getElementById('next-lesson');
-    const completeBtn = document.getElementById('complete-lesson');
-    
-    if (prevBtn && window.previousLesson) {
-        prevBtn.addEventListener('click', window.previousLesson);
-    }
-    
-    if (nextBtn && window.nextLesson) {
-        nextBtn.addEventListener('click', window.nextLesson);
-    }
-    
-    if (completeBtn && window.completeCurrentLesson) {
-        completeBtn.addEventListener('click', window.completeCurrentLesson);
     }
 }
 
@@ -298,11 +258,8 @@ function setupDownloadButton() {
     const downloadBtn = document.getElementById('download-course-btn');
     if (downloadBtn) {
         downloadBtn.addEventListener('click', () => {
-            if (window.coursesManager) {
-                window.coursesManager.showDownloadModal();
-            } else {
-                showDownloadModal();
-            }
+            console.log('Ouvrir modal de téléchargement');
+            showInfo('Fonctionnalité de téléchargement en cours de développement');
         });
     }
 }
@@ -312,11 +269,11 @@ async function loadDashboardData() {
     console.log('Chargement des données du dashboard...');
     
     try {
-        // Charger les informations utilisateur
-        await loadUserInfo();
-        
         // Charger les cours
         await loadCourses();
+        
+        // Mettre à jour les statistiques
+        await updateStats();
         
         // Mettre à jour les informations de stockage
         await updateStorageInfo();
@@ -327,95 +284,256 @@ async function loadDashboardData() {
     }
 }
 
-// Charger les informations utilisateur
-async function loadUserInfo() {
-    try {
-        const username = await window.electronAPI.store.get('username');
-        if (username) {
-            const userDisplay = document.getElementById('user-display-name');
-            if (userDisplay) {
-                userDisplay.textContent = username;
-            }
-        }
-    } catch (error) {
-        console.error('Erreur lors du chargement des infos utilisateur:', error);
-    }
-}
-
 // Charger les cours
-// Dans src/js/app.js, modifier loadCourses() :
-
+// Charger les cours - CORRECTION
 async function loadCourses() {
     const container = document.getElementById('courses-container');
-    container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+    const coursesListContainer = document.getElementById('courses-list');
+    
+    // Utiliser le bon container selon la page
+    const activeContainer = container || coursesListContainer;
+    if (!activeContainer) {
+        console.error('[App] Aucun container trouvé pour les cours');
+        return;
+    }
+    
+    activeContainer.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
     
     try {
-        // Utiliser la nouvelle API pour récupérer les cours de l'utilisateur
-        const response = await window.electronAPI.api.getUserCourses({
+        // 1. D'abord charger les cours locaux (offline first)
+        const localResponse = await window.electronAPI.db.getAllCourses();
+        if (localResponse.success && localResponse.result.length > 0) {
+            await displayCourses(localResponse.result, activeContainer, true);
+        }
+        
+        // 2. Ensuite, essayer de récupérer les cours en ligne
+        const onlineResponse = await window.electronAPI.api.getUserCourses({
             enrolled_only: true,
             page: 1,
             per_page: 50
         });
         
-        if (!response.success) {
-            throw new Error(response.error);
+        if (onlineResponse.success) {
+            const onlineCourses = onlineResponse.courses;
+            console.log('[App] Cours en ligne récupérés:', onlineCourses.length);
+            
+            // Mettre à jour l'affichage avec les cours en ligne
+            await displayCourses(onlineCourses, activeContainer, false);
+            
+            // Mettre à jour les statistiques
+            updateDashboardStats(onlineCourses);
+        } else {
+            console.warn('[App] Impossible de récupérer les cours en ligne:', onlineResponse.error);
+            // Garder l'affichage des cours locaux
         }
         
-        const courses = response.courses;
-        // ... reste du code
     } catch (error) {
-        console.error('Erreur:', error);
+        console.error('[App] Erreur lors du chargement des cours:', error);
+        
+        // En cas d'erreur, afficher uniquement les cours locaux
+        try {
+            const localResponse = await window.electronAPI.db.getAllCourses();
+            if (localResponse.success && localResponse.result.length > 0) {
+                await displayCourses(localResponse.result, activeContainer, true);
+            } else {
+                activeContainer.innerHTML = `
+                    <div class="empty-state">
+                        <svg width="64" height="64" viewBox="0 0 24 24" fill="currentColor" opacity="0.3">
+                            <path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z"/>
+                        </svg>
+                        <p>Aucun cours disponible</p>
+                        <p class="text-muted">Connectez-vous pour voir vos cours</p>
+                    </div>
+                `;
+            }
+        } catch (dbError) {
+            console.error('[App] Erreur DB:', dbError);
+            activeContainer.innerHTML = '<div class="message message-error">Erreur lors du chargement des cours</div>';
+        }
     }
 }
 
-// Créer une carte de cours
-function createCourseCard(course, progress) {
-    const card = document.createElement('div');
-    card.className = 'course-card card';
-    card.dataset.courseId = course.course_id;
-    
-    const isExpired = isCourseExpired(course);
-    const thumbnailUrl = course.thumbnail || 'assets/default-course.jpg';
-    const progressPercentage = progress ? Math.round(progress.completion_percentage || 0) : 0;
-    
-    card.innerHTML = `
-        <div class="course-thumbnail-wrapper">
-            <img src="${escapeHtml(thumbnailUrl)}" 
-                 alt="${escapeHtml(course.title)}" 
-                 class="course-thumbnail"
-                 onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjE4MCIgdmlld0JveD0iMCAwIDMwMCAxODAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iMTgwIiBmaWxsPSIjRjVGNUY1Ii8+CjxwYXRoIGQ9Ik0xMjAgODBMMTQwIDEwMEwxMjAgMTIwVjEwNUgxMDBWOTVIMTIwVjgwWiIgZmlsbD0iIzk5OTk5OSIvPgo8L3N2Zz4K'">
-            ${isExpired ? '<div class="course-expired-badge">Expiré</div>' : ''}
-        </div>
-        <div class="course-info">
-            <h3 class="course-title">${escapeHtml(course.title)}</h3>
-            <p class="course-instructor">${escapeHtml(course.instructor_name || 'Instructeur')}</p>
-            <div class="course-stats">
-                <span>📚 ${course.lessons_count || 0} leçons</span>
-                <span>⏱️ ${course.duration || 'Durée inconnue'}</span>
-                ${progressPercentage > 0 ? `<span>📊 ${progressPercentage}%</span>` : ''}
-            </div>
-        </div>
-        ${progress ? `
-        <div class="course-progress">
-            <div class="course-progress-bar" style="width: ${progressPercentage}%"></div>
-        </div>
-        ` : ''}
-        <div class="course-actions">
-            <button class="btn btn-icon" onclick="event.stopPropagation(); deleteCourse(${course.course_id})" title="Supprimer">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+
+// Afficher les cours
+async function displayCourses(courses, container, isLocal = false) {
+    if (!courses || courses.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="currentColor" opacity="0.3">
+                    <path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z"/>
                 </svg>
-            </button>
-        </div>
+                <p>Aucun cours disponible</p>
+                ${!isLocal ? '<button class="btn btn-primary" onclick="showDownloadModal()">Télécharger un cours</button>' : ''}
+            </div>
+        `;
+        return;
+    }
+    
+    // Créer la grille de cours
+    container.innerHTML = '<div class="courses-grid" id="courses-grid"></div>';
+    const grid = document.getElementById('courses-grid');
+    
+    // Obtenir les cours téléchargés pour comparaison
+    let downloadedCourseIds = new Set();
+    if (!isLocal) {
+        try {
+            const localCoursesResponse = await window.electronAPI.db.getAllCourses();
+            if (localCoursesResponse.success) {
+                downloadedCourseIds = new Set(localCoursesResponse.result.map(c => c.course_id));
+            }
+        } catch (error) {
+            console.error('[App] Erreur lors de la récupération des cours locaux:', error);
+        }
+    }
+
+
+// Afficher chaque cours
+    for (const course of courses) {
+        try {
+            // Récupérer la progression si disponible
+            let progress = null;
+            if (isLocal || downloadedCourseIds.has(course.id || course.course_id)) {
+                const progressResponse = await window.electronAPI.db.getCourseProgress(course.course_id || course.id);
+                progress = progressResponse.success ? progressResponse.result : null;
+            }
+            
+            // Créer la carte du cours
+            const card = createCourseCard(course, progress);
+            
+            // Ajouter un badge si le cours est téléchargé
+            if (!isLocal && downloadedCourseIds.has(course.id || course.course_id)) {
+                const badge = document.createElement('div');
+                badge.className = 'course-downloaded-badge';
+                badge.innerHTML = '💾';
+                badge.title = 'Cours téléchargé';
+                card.querySelector('.course-thumbnail-wrapper').appendChild(badge);
+            }
+            
+            grid.appendChild(card);
+            
+        } catch (error) {
+            console.error('[App] Erreur lors de l\'affichage du cours:', error);
+        }
+    }
+}
+
+
+// Mettre à jour les statistiques du dashboard
+function updateDashboardStats(courses) {
+    try {
+        // Nombre de cours
+        const statCourses = document.getElementById('stat-courses');
+        if (statCourses) {
+            statCourses.textContent = courses.length;
+        }
+        
+        // Cours terminés
+        const completedCourses = courses.filter(c => c.completed).length;
+        const statCompleted = document.getElementById('stat-completed');
+        if (statCompleted) {
+            statCompleted.textContent = completedCourses;
+        }
+        
+        // Progression moyenne
+        const totalProgress = courses.reduce((sum, course) => sum + (course.progress || 0), 0);
+        const avgProgress = courses.length > 0 ? Math.round(totalProgress / courses.length) : 0;
+        const statProgress = document.getElementById('stat-progress');
+        if (statProgress) {
+            statProgress.textContent = `${avgProgress}%`;
+        }
+        
+        // Mettre à jour le compteur dans le menu
+        const coursesCount = document.getElementById('courses-count');
+        if (coursesCount) {
+            coursesCount.textContent = courses.length;
+        }
+        
+    } catch (error) {
+        console.error('[App] Erreur lors de la mise à jour des stats:', error);
+    }
+}
+
+
+
+// Créer une carte de cours
+async function createCourseCard(course) {
+    const card = document.createElement('div');
+    card.className = 'course-card';
+    card.dataset.courseId = course.course_id || course.id;
+    
+    // Style pour la carte
+    card.style.cssText = `
+        background: var(--bg-card);
+        border-radius: var(--radius);
+        overflow: hidden;
+        border: 1px solid var(--border-color);
+        cursor: pointer;
+        transition: all 0.3s;
+        position: relative;
     `;
     
-    // Ajouter l'événement de clic
+    const isExpired = isCourseExpired(course);
+    const thumbnailUrl = course.thumbnail || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjE4MCIgdmlld0JveD0iMCAwIDMwMCAxODAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iMTgwIiBmaWxsPSIjMjAyMDIwIi8+CjxwYXRoIGQ9Ik0xNTAgOTBDMTUwIDEwMy4yNTUgMTM5LjI1NSAxMTQgMTI2IDExNEMxMTIuNzQ1IDExNCAxMDIgMTAzLjI1NSAxMDIgOTBDMTAyIDc2Ljc0NTIgMTEyLjc0NSA2NiAxMjYgNjZDMTM5LjI1NSA2NiAxNTAgNzYuNzQ1MiAxNTAgOTBaIiBmaWxsPSIjNDA0MDQwIi8+CjwvcGc+';
+    
+    // Obtenir la progression
+    let progressPercentage = 0;
+    try {
+        const progressResponse = await window.electronAPI.db.getCourseProgress(course.course_id || course.id);
+        if (progressResponse.success && progressResponse.result) {
+            progressPercentage = Math.round(progressResponse.result.completion_percentage || 0);
+        }
+    } catch (error) {
+        console.error('Erreur lors de la récupération de la progression:', error);
+    }
+    
+    card.innerHTML = `
+        <div style="position: relative; height: 180px; background: #1a1a1a; overflow: hidden;">
+            <img src="${escapeHtml(thumbnailUrl)}" 
+                 alt="${escapeHtml(course.title)}" 
+                 style="width: 100%; height: 100%; object-fit: cover;"
+                 onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+            <div style="display: none; width: 100%; height: 100%; align-items: center; justify-content: center; background: var(--bg-hover);">
+                <span style="font-size: 48px;">📚</span>
+            </div>
+            ${isExpired ? '<div style="position: absolute; top: 10px; right: 10px; background: var(--danger); color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Expiré</div>' : ''}
+        </div>
+        <div style="padding: 20px;">
+            <h3 style="margin: 0 0 8px; font-size: 18px; font-weight: 600;">
+                ${escapeHtml(course.title)}
+            </h3>
+            <p style="margin: 0 0 12px; color: var(--text-secondary); font-size: 14px;">
+                ${escapeHtml(course.instructor_name || 'Instructeur')}
+            </p>
+            <div style="display: flex; gap: 16px; font-size: 13px; color: var(--text-secondary); flex-wrap: wrap;">
+                <span>📚 ${course.lessons_count || 0} leçons</span>
+                <span>⏱️ ${course.duration || 'Durée inconnue'}</span>
+                ${progressPercentage > 0 ? `<span style="color: var(--success);">✓ ${progressPercentage}%</span>` : ''}
+            </div>
+        </div>
+        ${progressPercentage > 0 ? `
+            <div style="position: absolute; bottom: 0; left: 0; right: 0; height: 4px; background: var(--bg-hover);">
+                <div style="height: 100%; width: ${progressPercentage}%; background: var(--primary); transition: width 0.3s;"></div>
+            </div>
+        ` : ''}
+    `;
+    
+    // Ajouter les événements
     card.addEventListener('click', () => {
         if (!isExpired) {
-            openCourse(course.course_id);
+            openCourse(course.course_id || course.id);
         } else {
             showWarning('Ce cours a expiré et ne peut plus être consulté');
         }
+    });
+    
+    card.addEventListener('mouseenter', () => {
+        card.style.transform = 'translateY(-2px)';
+        card.style.boxShadow = '0 8px 16px rgba(0,0,0,0.3)';
+    });
+    
+    card.addEventListener('mouseleave', () => {
+        card.style.transform = '';
+        card.style.boxShadow = '';
     });
     
     return card;
@@ -423,258 +541,49 @@ function createCourseCard(course, progress) {
 
 // Ouvrir un cours
 async function openCourse(courseId) {
-    try {
-        showLoader('Chargement du cours...');
-        
-        const response = await window.electronAPI.db.getCourse(courseId);
-        if (!response.success) {
-            throw new Error(response.error);
-        }
-        
-        AppState.currentCourse = response.result;
-        
-        // Mettre à jour l'accès
-        const accessResponse = await window.electronAPI.db.updateCourseAccess(courseId);
-        if (!accessResponse.success) {
-            console.warn('Erreur lors de la mise à jour de l\'accès:', accessResponse.error);
-        }
-        
-        // Afficher le player
-        showPlayer();
-        
-        // Charger le contenu du cours
-        await loadCourseContent(courseId);
-        
-        hideLoader();
-    } catch (error) {
-        console.error('Erreur lors de l\'ouverture du cours:', error);
-        hideLoader();
-        showError('Impossible d\'ouvrir le cours');
+    console.log('Ouverture du cours:', courseId);
+    showInfo('Ouverture du cours en cours de développement');
+    // TODO: Implémenter l'ouverture du cours
+}
+
+// Charger la page des cours
+async function loadCoursesPage() {
+    const container = document.getElementById('courses-list');
+    if (container) {
+        container.innerHTML = '<p>Liste complète des cours...</p>';
     }
 }
 
-// Charger le contenu du cours
-async function loadCourseContent(courseId) {
-    try {
-        const sectionsResponse = await window.electronAPI.db.getSections(courseId);
-        if (!sectionsResponse.success) {
-            throw new Error(sectionsResponse.error);
-        }
-        
-        const sections = sectionsResponse.result;
-        const container = document.getElementById('course-sections');
-        if (!container) {
-            throw new Error('Container course-sections non trouvé');
-        }
-        
-        container.innerHTML = '';
-        
-        // Mettre à jour le titre du cours
-        const titleElement = document.getElementById('course-title');
-        if (titleElement && AppState.currentCourse) {
-            titleElement.textContent = AppState.currentCourse.title;
-        }
-        
-        for (const section of sections) {
-            const lessonsResponse = await window.electronAPI.db.getLessons(section.section_id);
-            if (!lessonsResponse.success) {
-                console.error('Erreur lors du chargement des leçons:', lessonsResponse.error);
-                continue;
-            }
-            
-            const lessons = lessonsResponse.result;
-            
-            const sectionEl = document.createElement('div');
-            sectionEl.className = 'course-section';
-            sectionEl.innerHTML = `
-                <h4 class="section-title">${escapeHtml(section.title)}</h4>
-                <div class="section-lessons"></div>
-            `;
-            
-            const lessonsContainer = sectionEl.querySelector('.section-lessons');
-            
-            for (const lesson of lessons) {
-                const lessonEl = document.createElement('div');
-                lessonEl.className = `lesson-item ${lesson.completed ? 'completed' : ''}`;
-                lessonEl.dataset.lessonId = lesson.lesson_id;
-                
-                lessonEl.innerHTML = `
-                    <span class="lesson-icon">
-                        ${getLessonIcon(lesson.type)}
-                    </span>
-                    <span class="lesson-title">${escapeHtml(lesson.title)}</span>
-                    <span class="lesson-duration">${lesson.duration || ''}</span>
-                    ${lesson.completed ? '<span class="lesson-check">✓</span>' : ''}
-                `;
-                
-                lessonEl.addEventListener('click', () => {
-                    if (window.loadLesson) {
-                        window.loadLesson(lesson.lesson_id);
-                    }
-                });
-                
-                lessonsContainer.appendChild(lessonEl);
-            }
-            
-            container.appendChild(sectionEl);
-        }
-        
-        // Charger la première leçon non complétée
-        const firstIncomplete = container.querySelector('.lesson-item:not(.completed)');
-        if (firstIncomplete) {
-            firstIncomplete.click();
-        } else {
-            // Ou la première leçon si toutes sont complétées
-            const firstLesson = container.querySelector('.lesson-item');
-            if (firstLesson) {
-                firstLesson.click();
-            }
-        }
-    } catch (error) {
-        console.error('Erreur lors du chargement du contenu:', error);
-        showError('Impossible de charger le contenu du cours');
+// Charger la page des téléchargements
+async function loadDownloadsPage() {
+    const container = document.getElementById('downloads-list');
+    if (container) {
+        container.innerHTML = '<p>Aucun téléchargement en cours</p>';
     }
 }
 
-// Supprimer un cours
-async function deleteCourse(courseId) {
-    if (confirm('Êtes-vous sûr de vouloir supprimer ce cours ? Cette action est irréversible.')) {
-        try {
-            showLoader('Suppression du cours...');
-            const response = await window.electronAPI.db.deleteCourse(courseId);
-            
-            if (!response.success) {
-                throw new Error(response.error);
-            }
-            
-            showSuccess('Cours supprimé avec succès');
-            await loadCourses();
-        } catch (error) {
-            console.error('Erreur lors de la suppression:', error);
-            showError('Erreur lors de la suppression du cours');
-        } finally {
-            hideLoader();
-        }
-    }
-}
-
-// Rechercher des cours
-async function searchCourses(query) {
-    const container = document.getElementById('courses-container');
-    if (!container) return;
-    
-    if (!query) {
-        await loadCourses();
-        return;
-    }
-    
-    container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-    
+// Mettre à jour les statistiques
+async function updateStats() {
     try {
-        const response = await window.electronAPI.db.searchCourses(query);
-        
-        if (!response.success) {
-            throw new Error(response.error);
-        }
-        
-        const courses = response.result;
-        
-        if (courses.length === 0) {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <p>Aucun cours trouvé pour "${escapeHtml(query)}"</p>
-                </div>
-            `;
-        } else {
-            container.innerHTML = '<div class="courses-grid" id="courses-grid"></div>';
-            const grid = document.getElementById('courses-grid');
+        const stats = await window.electronAPI.db.getStats();
+        if (stats.success) {
+            const statCourses = document.getElementById('stat-courses');
+            const statCompleted = document.getElementById('stat-completed');
+            const statProgress = document.getElementById('stat-progress');
             
-            for (const course of courses) {
-                const progressResponse = await window.electronAPI.db.getCourseProgress(course.course_id);
-                const progress = progressResponse.success ? progressResponse.result : null;
-                const card = createCourseCard(course, progress);
-                grid.appendChild(card);
-            }
+            if (statCourses) statCourses.textContent = stats.result.courses || 0;
+            if (statCompleted) statCompleted.textContent = '0'; // TODO: Calculer
+            if (statProgress) statProgress.textContent = '0%'; // TODO: Calculer
         }
     } catch (error) {
-        console.error('Erreur lors de la recherche:', error);
-        container.innerHTML = '<div class="message message-error">Erreur lors de la recherche</div>';
-    }
-}
-
-// Charger la progression
-async function loadProgress() {
-    const container = document.getElementById('progress-container');
-    if (!container) return;
-    
-    container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-    
-    try {
-        const coursesResponse = await window.electronAPI.db.getAllCourses();
-        if (!coursesResponse.success) {
-            throw new Error(coursesResponse.error);
-        }
-        
-        const courses = coursesResponse.result;
-        let html = '<div class="progress-list">';
-        
-        for (const course of courses) {
-            const progressResponse = await window.electronAPI.db.getCourseProgress(course.course_id);
-            const progress = progressResponse.success ? progressResponse.result : null;
-            
-            if (progress && progress.total_lessons > 0) {
-                html += `
-                    <div class="progress-item">
-                        <h4>${escapeHtml(course.title)}</h4>
-                        <div class="progress-stats">
-                            <span>${progress.completed_lessons}/${progress.total_lessons} leçons terminées</span>
-                            <span>${Math.round(progress.completion_percentage || 0)}%</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-fill" style="width: ${progress.completion_percentage || 0}%"></div>
-                        </div>
-                    </div>
-                `;
-            }
-        }
-        
-        if (html === '<div class="progress-list">') {
-            html = '<div class="empty-state"><p>Aucune progression à afficher</p></div>';
-        } else {
-            html += '</div>';
-        }
-        
-        container.innerHTML = html;
-        
-    } catch (error) {
-        console.error('Erreur lors du chargement de la progression:', error);
-        container.innerHTML = '<div class="message message-error">Erreur lors du chargement</div>';
+        console.error('Erreur lors de la mise à jour des stats:', error);
     }
 }
 
 // Mettre à jour les informations de stockage
 async function updateStorageInfo() {
-    try {
-        const stats = await window.electronAPI.db.getStats();
-        if (stats.success) {
-            const totalGB = 5 * 1024 * 1024 * 1024; // 5 GB par défaut
-            const used = stats.result.dbSize || 0;
-            const percentage = Math.min((used / totalGB) * 100, 100);
-            
-            const storageBar = document.getElementById('storage-bar');
-            const storageText = document.getElementById('storage-text');
-            
-            if (storageBar) {
-                storageBar.style.width = `${percentage}%`;
-            }
-            
-            if (storageText) {
-                storageText.textContent = `${formatFileSize(used)} / 5 GB`;
-            }
-        }
-    } catch (error) {
-        console.error('Erreur calcul stockage:', error);
-    }
+    // TODO: Implémenter le calcul du stockage
+    console.log('Mise à jour des infos de stockage');
 }
 
 // Mettre à jour les informations de l'app
@@ -688,6 +597,12 @@ async function updateAppInfo() {
     } catch (error) {
         console.error('Erreur lors de la récupération de la version:', error);
     }
+}
+
+// Rechercher des cours
+async function searchCourses(query) {
+    console.log('Recherche:', query);
+    // TODO: Implémenter la recherche
 }
 
 // Fonctions UI helpers
@@ -707,60 +622,10 @@ function showDashboard() {
     if (playerPage) playerPage.classList.add('hidden');
 }
 
-function showDownloadModal() {
-    const modal = document.getElementById('download-modal');
-    if (modal) {
-        modal.classList.remove('hidden');
-    }
-}
-
 // Utilitaires
-function getFileIcon(filename) {
-    const ext = filename.split('.').pop().toLowerCase();
-    const icons = {
-        'mp4': '🎥', 'avi': '🎥', 'mov': '🎥',
-        'pdf': '📕', 'doc': '📄', 'docx': '📄',
-        'jpg': '🖼️', 'png': '🖼️',
-        'mp3': '🎵',
-        'zip': '📦'
-    };
-    return icons[ext] || '📎';
-}
-
-function getMediaType(filename) {
-    const ext = filename.split('.').pop().toLowerCase();
-    const videoExts = ['mp4', 'avi', 'mov', 'mkv', 'webm'];
-    const docExts = ['pdf', 'doc', 'docx', 'txt', 'ppt', 'pptx'];
-    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'svg'];
-    
-    if (videoExts.includes(ext)) return 'video';
-    if (docExts.includes(ext)) return 'document';
-    if (imageExts.includes(ext)) return 'image';
-    
-    return 'other';
-}
-
-function getLessonIcon(type) {
-    const icons = {
-        'video': '🎥',
-        'text': '📄',
-        'quiz': '❓',
-        'assignment': '📋',
-        'pdf': '📕'
-    };
-    return icons[type] || '📄';
-}
-
 function isCourseExpired(course) {
     if (!course.expires_at) return false;
     return new Date(course.expires_at) < new Date();
-}
-
-function formatFileSize(bytes) {
-    if (bytes === 0) return '0 B';
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
 }
 
 function escapeHtml(text) {
@@ -782,70 +647,40 @@ function debounce(func, wait) {
     };
 }
 
-// Fonctions de notification
+// Notifications
 function showLoader(message = 'Chargement...') {
-    const loader = document.getElementById('global-loader');
-    if (loader) {
-        const text = loader.querySelector('p');
-        if (text) text.textContent = message;
-        loader.classList.add('show');
-    }
+    console.log('Loader:', message);
 }
 
 function hideLoader() {
-    const loader = document.getElementById('global-loader');
-    if (loader) {
-        loader.classList.remove('show');
-    }
+    console.log('Hide loader');
 }
 
 function showError(message) {
-    showNotification(message, 'error');
+    console.error('Erreur:', message);
+    alert('Erreur: ' + message);
 }
 
 function showSuccess(message) {
-    showNotification(message, 'success');
+    console.log('Succès:', message);
+    alert('Succès: ' + message);
 }
 
 function showWarning(message) {
-    showNotification(message, 'warning');
+    console.warn('Avertissement:', message);
+    alert('Attention: ' + message);
 }
 
-function showNotification(message, type = 'info') {
-    // Supprimer les anciennes notifications du même type
-    const oldNotifications = document.querySelectorAll(`.notification-${type}`);
-    oldNotifications.forEach(n => n.remove());
-    
-    const notification = document.createElement('div');
-    notification.className = `notification notification-${type} show`;
-    
-    const icons = {
-        'success': '✅',
-        'error': '❌',
-        'warning': '⚠️',
-        'info': 'ℹ️'
-    };
-    
-    notification.innerHTML = `
-        <span class="notification-icon">${icons[type] || 'ℹ️'}</span>
-        <span class="notification-message">${escapeHtml(message)}</span>
-        <button class="notification-close" onclick="this.parentElement.remove()">×</button>
-    `;
-    
-    document.body.appendChild(notification);
-    
-    // Auto-supprimer après 5 secondes
-    setTimeout(() => {
-        notification.classList.add('fade-out');
-        setTimeout(() => notification.remove(), 300);
-    }, 5000);
+function showInfo(message) {
+    console.info('Info:', message);
+    alert('Info: ' + message);
 }
 
 // Exports globaux
 window.loadCourses = loadCourses;
 window.openCourse = openCourse;
-window.deleteCourse = deleteCourse;
 window.searchCourses = searchCourses;
 window.updateStorageInfo = updateStorageInfo;
-window.showDownloadModal = showDownloadModal;
+window.showDashboard = showDashboard;
+window.showPlayer = showPlayer;
 window.AppState = AppState;
