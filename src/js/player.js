@@ -1,20 +1,57 @@
-// player.js - Gestionnaire du lecteur de cours
+// player.js - Lecteur de cours avec support du déchiffrement sécurisé
 
-// Variables globales pour le player
-let currentLesson = null;
-let lessonProgress = 0;
-let videoPlayer = null;
-let saveProgressInterval = null;
+// État du lecteur
+const PlayerState = {
+    currentCourse: null,
+    currentLesson: null,
+    currentSection: null,
+    lessonProgress: 0,
+    videoPlayer: null,
+    saveProgressInterval: null,
+    streamUrl: null,
+    notes: []
+};
+
+// Initialisation du lecteur
+document.addEventListener('DOMContentLoaded', () => {
+    initializePlayer();
+    setupPlayerControls();
+    setupKeyboardShortcuts();
+});
+
+// Initialiser le lecteur
+function initializePlayer() {
+    console.log('[Player] Initialisation du lecteur');
+    
+    // Événements de navigation
+    document.getElementById('back-to-courses')?.addEventListener('click', exitPlayer);
+    document.getElementById('prev-lesson')?.addEventListener('click', previousLesson);
+    document.getElementById('next-lesson')?.addEventListener('click', nextLesson);
+    document.getElementById('complete-lesson')?.addEventListener('click', completeCurrentLesson);
+    
+    // Contrôles vidéo personnalisés
+    document.getElementById('play-pause-btn')?.addEventListener('click', togglePlayPause);
+    document.getElementById('fullscreen-btn')?.addEventListener('click', toggleFullscreen);
+    document.getElementById('speed-control')?.addEventListener('change', changePlaybackSpeed);
+    document.getElementById('volume-control')?.addEventListener('input', changeVolume);
+    
+    // Notes et annotations
+    document.getElementById('add-note-btn')?.addEventListener('click', showNoteDialog);
+    document.getElementById('toggle-notes')?.addEventListener('click', toggleNotesPanel);
+}
 
 // Charger une leçon
 async function loadLesson(lessonId) {
     try {
-        showLoader('Chargement de la leçon...');
+        showPlayerLoader('Chargement de la leçon...');
         
         // Sauvegarder la progression de la leçon précédente
-        if (currentLesson) {
+        if (PlayerState.currentLesson) {
             await saveProgress();
         }
+        
+        // Nettoyer l'ancien contenu
+        cleanupCurrentLesson();
         
         // Charger la nouvelle leçon
         const response = await window.electronAPI.db.getLesson(lessonId);
@@ -22,27 +59,35 @@ async function loadLesson(lessonId) {
             throw new Error(response.error);
         }
         
-        currentLesson = response.result;
-        window.currentLesson = currentLesson; // Export global
+        PlayerState.currentLesson = response.result;
         
-        if (!currentLesson) {
+        if (!PlayerState.currentLesson) {
             throw new Error('Leçon non trouvée');
         }
         
-        // Mettre à jour l'interface
-        updateLessonUI();
+        console.log('[Player] Leçon chargée:', PlayerState.currentLesson.title);
         
-        // Charger le contenu
+        // Mettre à jour l'interface
+        updatePlayerUI();
+        
+        // Charger le contenu selon le type
         await loadLessonContent();
         
-        // Marquer la leçon comme active
+        // Marquer la leçon comme active dans la sidebar
         markLessonActive(lessonId);
         
-        hideLoader();
+        // Charger les notes de la leçon
+        await loadLessonNotes(lessonId);
+        
+        // Démarrer le suivi de progression
+        startProgressTracking();
+        
+        hidePlayerLoader();
+        
     } catch (error) {
-        console.error('Erreur lors du chargement de la leçon:', error);
-        hideLoader();
-        showError('Impossible de charger la leçon');
+        console.error('[Player] Erreur lors du chargement de la leçon:', error);
+        hidePlayerLoader();
+        showPlayerError('Impossible de charger la leçon');
     }
 }
 
@@ -52,82 +97,410 @@ async function loadLessonContent() {
     contentContainer.innerHTML = '';
     
     try {
-        // Charger les médias associés
-        const mediaResponse = await window.electronAPI.db.getMediaByLesson(currentLesson.lesson_id);
+        // Récupérer les médias associés
+        const mediaResponse = await window.electronAPI.db.getMediaByLesson(PlayerState.currentLesson.lesson_id);
         const mediaList = mediaResponse.success ? mediaResponse.result : [];
         
+        console.log('[Player] Médias trouvés:', mediaList.length);
+        
         // Créer le contenu selon le type
-        if (currentLesson.type === 'video') {
-            await createVideoPlayer(contentContainer, mediaList);
-        } else if (currentLesson.type === 'text' || currentLesson.type === 'article') {
-            createTextContent(contentContainer);
-        } else if (currentLesson.type === 'quiz') {
-            await createQuizContent(contentContainer);
-        } else if (currentLesson.type === 'pdf') {
-            await createPDFViewer(contentContainer, mediaList);
-        } else {
-            // Type générique
-            createGenericContent(contentContainer);
+        switch (PlayerState.currentLesson.type) {
+            case 'video':
+                await createVideoPlayer(contentContainer, mediaList);
+                break;
+            case 'text':
+            case 'article':
+                createTextContent(contentContainer);
+                break;
+            case 'quiz':
+                await createQuizContent(contentContainer);
+                break;
+            case 'pdf':
+                await createPDFViewer(contentContainer, mediaList);
+                break;
+            case 'assignment':
+                await createAssignmentContent(contentContainer);
+                break;
+            default:
+                createGenericContent(contentContainer);
         }
         
-        // Ajouter les documents supplémentaires
-        if (mediaList.length > 0) {
+        // Ajouter les ressources supplémentaires
+        if (mediaList.length > 1 || (mediaList.length > 0 && PlayerState.currentLesson.type !== 'video')) {
             createResourcesList(contentContainer, mediaList);
         }
+        
     } catch (error) {
-        console.error('Erreur lors du chargement du contenu:', error);
-        contentContainer.innerHTML = '<div class="message message-error">Erreur lors du chargement du contenu</div>';
+        console.error('[Player] Erreur lors du chargement du contenu:', error);
+        contentContainer.innerHTML = `
+            <div class="error-message">
+                <h3>Erreur de chargement</h3>
+                <p>${error.message}</p>
+                <button class="btn btn-primary" onclick="retryLoadContent()">Réessayer</button>
+            </div>
+        `;
     }
 }
 
-// Créer le lecteur vidéo
+// Créer le lecteur vidéo sécurisé
 async function createVideoPlayer(container, mediaList) {
     const videoMedia = mediaList.find(m => m.type === 'video');
     
     if (!videoMedia) {
-        container.innerHTML = '<div class="message message-warning">Aucune vidéo disponible pour cette leçon</div>';
+        container.innerHTML = `
+            <div class="no-content-message">
+                <svg class="no-content-icon" viewBox="0 0 24 24">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                </svg>
+                <p>Aucune vidéo disponible pour cette leçon</p>
+            </div>
+        `;
         return;
     }
     
-    const videoContainer = document.createElement('div');
-    videoContainer.className = 'video-container';
+    console.log('[Player] Création du lecteur vidéo pour:', videoMedia.filename);
     
-    videoContainer.innerHTML = `
-        <video id="lesson-video" class="video-player" controls>
-            <source src="${videoMedia.path}" type="${videoMedia.mime_type || 'video/mp4'}">
-            Votre navigateur ne supporte pas la lecture vidéo.
-        </video>
-        <div class="video-controls">
-            <button class="btn btn-icon" onclick="skipBackward()">-10s</button>
-            <button class="btn btn-icon" onclick="skipForward()">+10s</button>
-            <select class="form-control" onchange="changePlaybackRate(this.value)">
-                <option value="0.5">0.5x</option>
-                <option value="0.75">0.75x</option>
-                <option value="1" selected>1x</option>
-                <option value="1.25">1.25x</option>
-                <option value="1.5">1.5x</option>
-                <option value="2">2x</option>
-            </select>
-            <span class="video-time">
-                <span id="current-time">0:00</span> / <span id="duration">0:00</span>
-            </span>
-        </div>
-    `;
-    
-    container.appendChild(videoContainer);
-    
-    // Initialiser le lecteur vidéo
-    videoPlayer = document.getElementById('lesson-video');
-    
-    // Restaurer la position
-    if (currentLesson.last_position > 0) {
-        videoPlayer.currentTime = currentLesson.last_position;
+    // Créer une URL de streaming sécurisée
+    try {
+        const streamResponse = await window.electronAPI.createStreamUrl({
+            filePath: videoMedia.path,
+            mimeType: videoMedia.mime_type || 'video/mp4'
+        });
+        
+        if (!streamResponse.success) {
+            throw new Error(streamResponse.error);
+        }
+        
+        PlayerState.streamUrl = streamResponse.url;
+        
+        const videoContainer = document.createElement('div');
+        videoContainer.className = 'video-player-container';
+        
+        videoContainer.innerHTML = `
+            <div class="video-wrapper">
+                <video id="lesson-video" class="video-player" controlsList="nodownload">
+                    <source src="${PlayerState.streamUrl}" type="${videoMedia.mime_type || 'video/mp4'}">
+                    Votre navigateur ne supporte pas la lecture vidéo.
+                </video>
+                
+                <!-- Contrôles personnalisés -->
+                <div class="video-controls" id="video-controls">
+                    <div class="progress-bar" id="video-progress">
+                        <div class="progress-buffered" id="progress-buffered"></div>
+                        <div class="progress-played" id="progress-played"></div>
+                        <div class="progress-handle" id="progress-handle"></div>
+                    </div>
+                    
+                    <div class="controls-row">
+                        <div class="controls-left">
+                            <button class="control-btn" id="play-pause-btn">
+                                <svg class="play-icon" viewBox="0 0 24 24">
+                                    <path d="M8 5v14l11-7z"/>
+                                </svg>
+                                <svg class="pause-icon" style="display: none;" viewBox="0 0 24 24">
+                                    <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                                </svg>
+                            </button>
+                            
+                            <button class="control-btn" onclick="skipBackward()">
+                                <svg viewBox="0 0 24 24">
+                                    <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/>
+                                </svg>
+                                <span class="skip-label">-10s</span>
+                            </button>
+                            
+                            <button class="control-btn" onclick="skipForward()">
+                                <svg viewBox="0 0 24 24">
+                                    <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/>
+                                </svg>
+                                <span class="skip-label">+10s</span>
+                            </button>
+                            
+                            <div class="volume-control">
+                                <button class="control-btn" id="volume-btn" onclick="toggleMute()">
+                                    <svg viewBox="0 0 24 24">
+                                        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+                                    </svg>
+                                </button>
+                                <input type="range" id="volume-control" min="0" max="100" value="100">
+                            </div>
+                            
+                            <span class="time-display">
+                                <span id="current-time">0:00</span> / <span id="duration">0:00</span>
+                            </span>
+                        </div>
+                        
+                        <div class="controls-right">
+                            <select class="speed-control" id="speed-control">
+                                <option value="0.5">0.5x</option>
+                                <option value="0.75">0.75x</option>
+                                <option value="1" selected>1x</option>
+                                <option value="1.25">1.25x</option>
+                                <option value="1.5">1.5x</option>
+                                <option value="2">2x</option>
+                            </select>
+                            
+                            <button class="control-btn" id="captions-btn" onclick="toggleCaptions()">
+                                <svg viewBox="0 0 24 24">
+                                    <path d="M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/>
+                                </svg>
+                            </button>
+                            
+                            <button class="control-btn" id="fullscreen-btn">
+                                <svg viewBox="0 0 24 24">
+                                    <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Overlay pour les notes -->
+                <div class="video-overlay" id="video-overlay" style="display: none;">
+                    <div class="note-marker" style="left: 50%; top: 50%;">
+                        <span class="note-content">Note ajoutée ici</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Panneau des chapitres -->
+            <div class="chapters-panel" id="chapters-panel">
+                <h4>Chapitres</h4>
+                <div class="chapters-list" id="chapters-list">
+                    <!-- Les chapitres seront ajoutés ici -->
+                </div>
+            </div>
+        `;
+        
+        container.appendChild(videoContainer);
+        
+        // Initialiser le lecteur vidéo
+        PlayerState.videoPlayer = document.getElementById('lesson-video');
+        
+        // Configurer les événements vidéo
+        setupVideoEvents();
+        
+        // Restaurer la position si disponible
+        if (PlayerState.currentLesson.last_position > 0) {
+            PlayerState.videoPlayer.currentTime = PlayerState.currentLesson.last_position;
+        }
+        
+        // Charger les chapitres si disponibles
+        loadVideoChapters();
+        
+    } catch (error) {
+        console.error('[Player] Erreur lors de la création du lecteur vidéo:', error);
+        container.innerHTML = `
+            <div class="error-message">
+                <h3>Erreur de lecture</h3>
+                <p>Impossible de lire cette vidéo. ${error.message}</p>
+            </div>
+        `;
     }
+}
+
+// Configurer les événements vidéo
+function setupVideoEvents() {
+    const video = PlayerState.videoPlayer;
+    if (!video) return;
     
-    // Événements vidéo
-    videoPlayer.addEventListener('timeupdate', handleVideoProgress);
-    videoPlayer.addEventListener('ended', handleVideoEnded);
-    videoPlayer.addEventListener('loadedmetadata', updateVideoDuration);
+    // Événements de lecture
+    video.addEventListener('play', onVideoPlay);
+    video.addEventListener('pause', onVideoPause);
+    video.addEventListener('ended', onVideoEnded);
+    video.addEventListener('timeupdate', onVideoTimeUpdate);
+    video.addEventListener('loadedmetadata', onVideoMetadataLoaded);
+    video.addEventListener('progress', onVideoProgress);
+    video.addEventListener('error', onVideoError);
+    
+    // Barre de progression
+    const progressBar = document.getElementById('video-progress');
+    progressBar?.addEventListener('click', seekVideo);
+    progressBar?.addEventListener('mousedown', startSeek);
+    
+    // Raccourcis clavier pour la vidéo
+    video.addEventListener('keydown', handleVideoKeyboard);
+}
+
+// Événements vidéo
+function onVideoPlay() {
+    updatePlayPauseButton(true);
+    startProgressTracking();
+}
+
+function onVideoPause() {
+    updatePlayPauseButton(false);
+    saveProgress();
+}
+
+function onVideoEnded() {
+    PlayerState.lessonProgress = 100;
+    completeCurrentLesson();
+}
+
+function onVideoTimeUpdate() {
+    if (!PlayerState.videoPlayer) return;
+    
+    const video = PlayerState.videoPlayer;
+    const currentTime = video.currentTime;
+    const duration = video.duration;
+    
+    if (duration) {
+        // Mettre à jour la progression
+        PlayerState.lessonProgress = Math.round((currentTime / duration) * 100);
+        
+        // Mettre à jour l'affichage
+        updateTimeDisplay(currentTime, duration);
+        updateProgressBar(currentTime, duration);
+        
+        // Sauvegarder la position
+        PlayerState.currentLesson.last_position = Math.floor(currentTime);
+    }
+}
+
+function onVideoMetadataLoaded() {
+    const video = PlayerState.videoPlayer;
+    if (video && video.duration) {
+        document.getElementById('duration').textContent = formatTime(video.duration);
+    }
+}
+
+function onVideoProgress() {
+    // Afficher le buffering
+    const video = PlayerState.videoPlayer;
+    if (video && video.buffered.length > 0) {
+        const buffered = video.buffered.end(video.buffered.length - 1);
+        const duration = video.duration;
+        const percent = (buffered / duration) * 100;
+        
+        const bufferedBar = document.getElementById('progress-buffered');
+        if (bufferedBar) {
+            bufferedBar.style.width = percent + '%';
+        }
+    }
+}
+
+function onVideoError(e) {
+    console.error('[Player] Erreur vidéo:', e);
+    showPlayerError('Erreur lors de la lecture de la vidéo');
+}
+
+// Contrôles vidéo
+function togglePlayPause() {
+    if (PlayerState.videoPlayer) {
+        if (PlayerState.videoPlayer.paused) {
+            PlayerState.videoPlayer.play();
+        } else {
+            PlayerState.videoPlayer.pause();
+        }
+    }
+}
+
+function updatePlayPauseButton(isPlaying) {
+    const playIcon = document.querySelector('.play-icon');
+    const pauseIcon = document.querySelector('.pause-icon');
+    
+    if (isPlaying) {
+        playIcon.style.display = 'none';
+        pauseIcon.style.display = 'block';
+    } else {
+        playIcon.style.display = 'block';
+        pauseIcon.style.display = 'none';
+    }
+}
+
+function skipBackward() {
+    if (PlayerState.videoPlayer) {
+        PlayerState.videoPlayer.currentTime = Math.max(0, PlayerState.videoPlayer.currentTime - 10);
+    }
+}
+
+function skipForward() {
+    if (PlayerState.videoPlayer) {
+        const video = PlayerState.videoPlayer;
+        video.currentTime = Math.min(video.duration, video.currentTime + 10);
+    }
+}
+
+function changePlaybackSpeed(e) {
+    if (PlayerState.videoPlayer) {
+        PlayerState.videoPlayer.playbackRate = parseFloat(e.target.value);
+    }
+}
+
+function changeVolume(e) {
+    if (PlayerState.videoPlayer) {
+        PlayerState.videoPlayer.volume = e.target.value / 100;
+    }
+}
+
+function toggleMute() {
+    if (PlayerState.videoPlayer) {
+        PlayerState.videoPlayer.muted = !PlayerState.videoPlayer.muted;
+        updateVolumeButton();
+    }
+}
+
+function toggleFullscreen() {
+    const container = document.querySelector('.video-player-container');
+    if (!container) return;
+    
+    if (!document.fullscreenElement) {
+        container.requestFullscreen().catch(err => {
+            console.error('Erreur fullscreen:', err);
+        });
+    } else {
+        document.exitFullscreen();
+    }
+}
+
+// Seeking vidéo
+function seekVideo(e) {
+    if (!PlayerState.videoPlayer) return;
+    
+    const progressBar = e.currentTarget;
+    const rect = progressBar.getBoundingClientRect();
+    const percent = (e.clientX - rect.left) / rect.width;
+    
+    PlayerState.videoPlayer.currentTime = percent * PlayerState.videoPlayer.duration;
+}
+
+let isSeeking = false;
+function startSeek(e) {
+    isSeeking = true;
+    document.addEventListener('mousemove', handleSeek);
+    document.addEventListener('mouseup', endSeek);
+}
+
+function handleSeek(e) {
+    if (!isSeeking || !PlayerState.videoPlayer) return;
+    
+    const progressBar = document.getElementById('video-progress');
+    const rect = progressBar.getBoundingClientRect();
+    const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    
+    PlayerState.videoPlayer.currentTime = percent * PlayerState.videoPlayer.duration;
+}
+
+function endSeek() {
+    isSeeking = false;
+    document.removeEventListener('mousemove', handleSeek);
+    document.removeEventListener('mouseup', endSeek);
+}
+
+// Mise à jour de l'affichage
+function updateTimeDisplay(currentTime, duration) {
+    document.getElementById('current-time').textContent = formatTime(currentTime);
+    document.getElementById('duration').textContent = formatTime(duration);
+}
+
+function updateProgressBar(currentTime, duration) {
+    const percent = (currentTime / duration) * 100;
+    const playedBar = document.getElementById('progress-played');
+    const handle = document.getElementById('progress-handle');
+    
+    if (playedBar) playedBar.style.width = percent + '%';
+    if (handle) handle.style.left = percent + '%';
 }
 
 // Créer le contenu texte
@@ -135,404 +508,250 @@ function createTextContent(container) {
     const textContainer = document.createElement('div');
     textContainer.className = 'text-content';
     
-    if (currentLesson.content) {
-        textContainer.innerHTML = currentLesson.content;
+    if (PlayerState.currentLesson.content) {
+        textContainer.innerHTML = `
+            <div class="text-content-wrapper">
+                ${PlayerState.currentLesson.content}
+            </div>
+        `;
     } else {
-        textContainer.innerHTML = '<p>Aucun contenu disponible.</p>';
+        textContainer.innerHTML = '<p class="no-content">Aucun contenu disponible.</p>';
     }
     
     container.appendChild(textContainer);
     
     // Marquer comme lu après 5 secondes
     setTimeout(() => {
-        lessonProgress = 100;
+        PlayerState.lessonProgress = 100;
     }, 5000);
 }
 
 // Créer le contenu quiz
 async function createQuizContent(container) {
-    try {
-        // Récupérer le quiz depuis la base de données
-        const response = await window.electronAPI.db.getQuiz(currentLesson.lesson_id);
-        
-        if (!response.success) {
-            throw new Error(response.error);
-        }
-        
-        const quizzes = response.result;
-        
-        if (!quizzes || quizzes.length === 0) {
-            container.innerHTML = '<div class="message message-info">Aucun quiz disponible pour cette leçon</div>';
-            return;
-        }
-        
-        const quiz = quizzes[0]; // Prendre le premier quiz
-        
-        const quizContainer = document.createElement('div');
-        quizContainer.className = 'quiz-container';
-        
-        quizContainer.innerHTML = `
-            <h3>Quiz: ${currentLesson.title}</h3>
-            <div id="quiz-questions"></div>
-            <button class="btn btn-primary" id="submit-quiz">Soumettre le quiz</button>
-            <div id="quiz-results" class="hidden"></div>
-        `;
-        
-        container.appendChild(quizContainer);
-        
-        // Afficher les questions
-        displayQuizQuestions(quiz.questions);
-        
-        // Gérer la soumission
-        document.getElementById('submit-quiz').addEventListener('click', () => submitQuiz(quiz));
-        
-    } catch (error) {
-        console.error('Erreur lors du chargement du quiz:', error);
-        container.innerHTML = '<div class="message message-error">Erreur lors du chargement du quiz</div>';
-    }
-}
-
-// Afficher les questions du quiz
-function displayQuizQuestions(questions) {
-    const container = document.getElementById('quiz-questions');
-    container.innerHTML = '';
-    
-    questions.forEach((question, index) => {
-        const questionEl = document.createElement('div');
-        questionEl.className = 'quiz-question';
-        
-        questionEl.innerHTML = `
-            <h4>Question ${index + 1}: ${question.question}</h4>
-            <div class="quiz-options">
-                ${question.options.map((option, optionIndex) => `
-                    <label class="radio-label">
-                        <input type="radio" name="question-${index}" value="${optionIndex}">
-                        <span>${option}</span>
-                    </label>
-                `).join('')}
-            </div>
-        `;
-        
-        container.appendChild(questionEl);
-    });
-}
-
-// Créer le visualiseur PDF
-async function createPDFViewer(container, mediaList) {
-    const pdfMedia = mediaList.find(m => m.type === 'document' && m.mime_type === 'application/pdf');
-    
-    if (!pdfMedia) {
-        container.innerHTML = '<div class="message message-warning">Aucun PDF disponible pour cette leçon</div>';
-        return;
-    }
-    
-    const pdfContainer = document.createElement('div');
-    pdfContainer.className = 'pdf-container';
-    
-    pdfContainer.innerHTML = `
-        <iframe src="${pdfMedia.path}" 
-                class="pdf-viewer" 
-                width="100%" 
-                height="600px">
-        </iframe>
+    // À implémenter : système de quiz interactif
+    container.innerHTML = `
+        <div class="quiz-container">
+            <h3>Quiz: ${PlayerState.currentLesson.title}</h3>
+            <p>Fonctionnalité quiz en cours de développement</p>
+        </div>
     `;
-    
-    container.appendChild(pdfContainer);
 }
 
-// Créer le contenu générique
-function createGenericContent(container) {
-    const content = document.createElement('div');
-    content.className = 'generic-content';
+// Navigation entre les leçons
+async function previousLesson() {
+    const lessons = document.querySelectorAll('.lesson-item');
+    const currentIndex = Array.from(lessons).findIndex(l => 
+        l.dataset.lessonId === PlayerState.currentLesson?.lesson_id?.toString()
+    );
     
-    content.innerHTML = currentLesson.content || 
-        `<p>Type de leçon: ${currentLesson.type}</p>
-         <p>Contenu non disponible.</p>`;
-    
-    container.appendChild(content);
-}
-
-// Créer la liste des ressources
-function createResourcesList(container, mediaList) {
-    if (mediaList.length === 0) return;
-    
-    const resourcesContainer = document.createElement('div');
-    resourcesContainer.className = 'resources-container';
-    
-    resourcesContainer.innerHTML = `
-        <h4>Ressources de la leçon</h4>
-        <ul class="resources-list">
-            ${mediaList.map(media => `
-                <li>
-                    <span class="resource-icon">${getFileIcon(media.filename)}</span>
-                    <a href="#" onclick="openResource('${media.media_id}'); return false;">
-                        ${media.original_filename || media.filename}
-                    </a>
-                    <span class="resource-size">${formatFileSize(media.size || 0)}</span>
-                </li>
-            `).join('')}
-        </ul>
-    `;
-    
-    container.appendChild(resourcesContainer);
-}
-
-// Gérer la progression vidéo
-function handleVideoProgress() {
-    if (!videoPlayer || !videoPlayer.duration) return;
-    
-    const percentage = (videoPlayer.currentTime / videoPlayer.duration) * 100;
-    lessonProgress = Math.round(percentage);
-    
-    // Mettre à jour l'affichage du temps
-    document.getElementById('current-time').textContent = formatDuration(videoPlayer.currentTime);
-    
-    // Sauvegarder la position
-    currentLesson.last_position = Math.floor(videoPlayer.currentTime);
-}
-
-// Gérer la fin de la vidéo
-function handleVideoEnded() {
-    lessonProgress = 100;
-    completeCurrentLesson();
-}
-
-// Mettre à jour la durée de la vidéo
-function updateVideoDuration() {
-    if (videoPlayer && videoPlayer.duration) {
-        document.getElementById('duration').textContent = formatDuration(videoPlayer.duration);
+    if (currentIndex > 0) {
+        const prevLessonId = lessons[currentIndex - 1].dataset.lessonId;
+        await loadLesson(prevLessonId);
     }
 }
 
-// Contrôles vidéo
-function skipBackward() {
-    if (videoPlayer) {
-        videoPlayer.currentTime = Math.max(0, videoPlayer.currentTime - 10);
-    }
-}
-
-function skipForward() {
-    if (videoPlayer) {
-        videoPlayer.currentTime = Math.min(videoPlayer.duration, videoPlayer.currentTime + 10);
-    }
-}
-
-function changePlaybackRate(rate) {
-    if (videoPlayer) {
-        videoPlayer.playbackRate = parseFloat(rate);
-    }
-}
-
-// Sauvegarder la progression
-async function saveProgress() {
-    if (!currentLesson) return;
+async function nextLesson() {
+    const lessons = document.querySelectorAll('.lesson-item');
+    const currentIndex = Array.from(lessons).findIndex(l => 
+        l.dataset.lessonId === PlayerState.currentLesson?.lesson_id?.toString()
+    );
     
-    try {
-        const response = await window.electronAPI.db.updateLessonProgress(
-            currentLesson.lesson_id,
-            lessonProgress,
-            lessonProgress >= 95 // Considérer comme complété à 95%
-        );
-        
-        if (!response.success) {
-            console.error('Erreur lors de la sauvegarde:', response.error);
-        }
-    } catch (error) {
-        console.error('Erreur lors de la sauvegarde de la progression:', error);
+    if (currentIndex < lessons.length - 1) {
+        const nextLessonId = lessons[currentIndex + 1].dataset.lessonId;
+        await loadLesson(nextLessonId);
     }
 }
 
 // Marquer la leçon comme complétée
 async function completeCurrentLesson() {
-    if (!currentLesson) return;
+    if (!PlayerState.currentLesson) return;
     
     try {
-        const response = await window.electronAPI.db.updateLessonProgress(currentLesson.lesson_id, 100, true);
+        const response = await window.electronAPI.db.updateLessonProgress(
+            PlayerState.currentLesson.lesson_id,
+            100,
+            true
+        );
         
         if (!response.success) {
             throw new Error(response.error);
         }
         
-        currentLesson.completed = true;
-        updateLessonUI();
+        PlayerState.currentLesson.completed = true;
+        updatePlayerUI();
         
-        // Mettre à jour l'affichage dans la sidebar
-        const lessonEl = document.querySelector(`[data-lesson-id="${currentLesson.lesson_id}"]`);
+        // Mettre à jour l'UI
+        const lessonEl = document.querySelector(`[data-lesson-id="${PlayerState.currentLesson.lesson_id}"]`);
         if (lessonEl) {
             lessonEl.classList.add('completed');
-            if (!lessonEl.querySelector('.lesson-check')) {
-                lessonEl.innerHTML += '<span class="lesson-check">✓</span>';
-            }
         }
         
-        showSuccess('Leçon marquée comme terminée !');
+        showPlayerSuccess('Leçon terminée !');
         
-        // Passer automatiquement à la suivante après 2 secondes
+        // Passer à la suivante après 2 secondes
         setTimeout(() => {
             nextLesson();
         }, 2000);
         
     } catch (error) {
-        console.error('Erreur lors de la complétion de la leçon:', error);
-        showError('Erreur lors de la sauvegarde');
+        console.error('[Player] Erreur lors de la complétion:', error);
+        showPlayerError('Erreur lors de la sauvegarde');
     }
 }
 
-// Soumettre le quiz
-async function submitQuiz(quiz) {
-    const answers = [];
+// Sauvegarder la progression
+async function saveProgress() {
+    if (!PlayerState.currentLesson) return;
     
-    quiz.questions.forEach((question, index) => {
-        const selected = document.querySelector(`input[name="question-${index}"]:checked`);
-        answers.push(selected ? parseInt(selected.value) : null);
-    });
-    
-    // Calculer le score
-    let correctCount = 0;
-    quiz.questions.forEach((question, index) => {
-        if (answers[index] === question.correctAnswer) {
-            correctCount++;
-        }
-    });
-    
-    const score = (correctCount / quiz.questions.length) * 100;
-    
-    // Sauvegarder la tentative
     try {
-        const response = await window.electronAPI.db.saveQuizAttempt(quiz.quiz_id, answers, score);
-        if (!response.success) {
-            console.error('Erreur lors de la sauvegarde du quiz:', response.error);
-        }
+        await window.electronAPI.db.updateLessonProgress(
+            PlayerState.currentLesson.lesson_id,
+            PlayerState.lessonProgress,
+            PlayerState.lessonProgress >= 95
+        );
     } catch (error) {
-        console.error('Erreur lors de la sauvegarde du quiz:', error);
-    }
-    
-    // Afficher les résultats
-    const resultsEl = document.getElementById('quiz-results');
-    resultsEl.innerHTML = `
-        <h3>Résultats</h3>
-        <p>Score : ${score.toFixed(0)}% (${correctCount}/${quiz.questions.length})</p>
-        ${score >= 70 ? 
-            '<p class="success">Félicitations ! Vous avez réussi le quiz.</p>' : 
-            '<p class="warning">Vous devriez revoir cette leçon.</p>'
-        }
-    `;
-    resultsEl.classList.remove('hidden');
-    
-    // Marquer comme complété si score suffisant
-    if (score >= 70) {
-        lessonProgress = 100;
-        completeCurrentLesson();
+        console.error('[Player] Erreur lors de la sauvegarde:', error);
     }
 }
 
-// Ouvrir une ressource
-async function openResource(mediaId) {
-    try {
-        const response = await window.electronAPI.db.getMedia(mediaId);
-        if (!response.success) {
-            throw new Error(response.error);
-        }
-        
-        const media = response.result;
-        if (media && media.path) {
-            await window.electronAPI.openExternal(`file://${media.path}`);
-        }
-    } catch (error) {
-        console.error('Erreur lors de l\'ouverture de la ressource:', error);
-        showError('Impossible d\'ouvrir la ressource');
-    }
-}
-
-// Navigation
-function previousLesson() {
-    const lessons = document.querySelectorAll('.lesson-item');
-    const currentIndex = Array.from(lessons).findIndex(l => 
-        l.dataset.lessonId === currentLesson?.lesson_id?.toString()
-    );
+// Suivi de progression
+function startProgressTracking() {
+    stopProgressTracking();
     
-    if (currentIndex > 0) {
-        lessons[currentIndex - 1].click();
+    PlayerState.saveProgressInterval = setInterval(() => {
+        saveProgress();
+    }, 10000); // Sauvegarder toutes les 10 secondes
+}
+
+function stopProgressTracking() {
+    if (PlayerState.saveProgressInterval) {
+        clearInterval(PlayerState.saveProgressInterval);
+        PlayerState.saveProgressInterval = null;
     }
 }
 
-function nextLesson() {
-    const lessons = document.querySelectorAll('.lesson-item');
-    const currentIndex = Array.from(lessons).findIndex(l => 
-        l.dataset.lessonId === currentLesson?.lesson_id?.toString()
-    );
+// Nettoyage
+function cleanupCurrentLesson() {
+    stopProgressTracking();
     
-    if (currentIndex < lessons.length - 1) {
-        lessons[currentIndex + 1].click();
+    if (PlayerState.videoPlayer) {
+        PlayerState.videoPlayer.pause();
+        PlayerState.videoPlayer.src = '';
+        PlayerState.videoPlayer = null;
+    }
+    
+    if (PlayerState.streamUrl) {
+        // Le serveur de streaming nettoiera automatiquement après expiration
+        PlayerState.streamUrl = null;
     }
 }
 
-// Fonctions UI helpers
-function updateLessonUI() {
+// Sortir du lecteur
+async function exitPlayer() {
+    await saveProgress();
+    cleanupCurrentLesson();
+    
+    // Retourner au dashboard
+    if (window.showDashboard) {
+        window.showDashboard();
+    }
+}
+
+// UI Helpers
+function updatePlayerUI() {
     const completeBtn = document.getElementById('complete-lesson');
     if (completeBtn) {
-        if (currentLesson.completed) {
-            completeBtn.textContent = 'Leçon terminée ✓';
+        if (PlayerState.currentLesson?.completed) {
+            completeBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> Terminé';
             completeBtn.disabled = true;
         } else {
             completeBtn.textContent = 'Marquer comme terminé';
             completeBtn.disabled = false;
         }
     }
+    
+    // Mettre à jour le titre
+    const titleEl = document.getElementById('lesson-title');
+    if (titleEl && PlayerState.currentLesson) {
+        titleEl.textContent = PlayerState.currentLesson.title;
+    }
 }
 
 function markLessonActive(lessonId) {
-    // Retirer la classe active de toutes les leçons
     document.querySelectorAll('.lesson-item').forEach(item => {
         item.classList.remove('active');
     });
     
-    // Ajouter la classe active à la leçon sélectionnée
     const lessonEl = document.querySelector(`[data-lesson-id="${lessonId}"]`);
     if (lessonEl) {
         lessonEl.classList.add('active');
     }
 }
 
-function getFileIcon(filename) {
-    const ext = filename.split('.').pop().toLowerCase();
-    const icons = {
-        'mp4': '🎥', 'avi': '🎥', 'mov': '🎥',
-        'pdf': '📕', 'doc': '📄', 'docx': '📄',
-        'jpg': '🖼️', 'png': '🖼️',
-        'mp3': '🎵',
-        'zip': '📦'
-    };
+// Utilitaires
+function formatTime(seconds) {
+    if (!seconds || isNaN(seconds)) return '0:00';
     
-    return icons[ext] || '📎';
-}
-
-function formatFileSize(bytes) {
-    if (bytes === 0) return '0 B';
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
-}
-
-function formatDuration(seconds) {
-    if (!seconds) return '0:00';
-    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
     const secs = Math.floor(seconds % 60);
+    
+    if (hours > 0) {
+        return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+    
     return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
 
-// Événements des boutons
-document.getElementById('prev-lesson')?.addEventListener('click', previousLesson);
-document.getElementById('next-lesson')?.addEventListener('click', nextLesson);
-document.getElementById('complete-lesson')?.addEventListener('click', completeCurrentLesson);
-document.getElementById('fullscreen-btn')?.addEventListener('click', () => {
-    const playerContainer = document.querySelector('.player-container');
-    if (playerContainer.requestFullscreen) {
-        playerContainer.requestFullscreen();
-    }
-});
+// Notifications
+function showPlayerLoader(message) {
+    // Implémenter le loader du player
+}
+
+function hidePlayerLoader() {
+    // Masquer le loader
+}
+
+function showPlayerError(message) {
+    // Afficher une erreur
+}
+
+function showPlayerSuccess(message) {
+    // Afficher un succès
+}
+
+// Raccourcis clavier
+function setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        if (!PlayerState.videoPlayer) return;
+        
+        switch(e.key) {
+            case ' ':
+                e.preventDefault();
+                togglePlayPause();
+                break;
+            case 'ArrowLeft':
+                skipBackward();
+                break;
+            case 'ArrowRight':
+                skipForward();
+                break;
+            case 'ArrowUp':
+                PlayerState.videoPlayer.volume = Math.min(1, PlayerState.videoPlayer.volume + 0.1);
+                break;
+            case 'ArrowDown':
+                PlayerState.videoPlayer.volume = Math.max(0, PlayerState.videoPlayer.volume - 0.1);
+                break;
+            case 'f':
+                toggleFullscreen();
+                break;
+            case 'm':
+                toggleMute();
+                break;
+        }
+    });
+}
 
 // Export global
 window.loadLesson = loadLesson;
-window.openResource = openResource;
-window.currentLesson = currentLesson;
+window.PlayerState = PlayerState;
