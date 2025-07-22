@@ -298,6 +298,38 @@ async function performLogout() {
     }
 }
 
+
+// Écouter l'événement de déconnexion forcée
+window.electronAPI.on('force-logout', async (data) => {
+    console.log('[Auth] Déconnexion forcée reçue:', data);
+    
+    // Nettoyer l'état local
+    window.AuthState.isLoggedIn = false;
+    window.AuthState.user = null;
+    window.AuthState.apiUrl = null;
+    
+    // Nettoyer le stockage
+    try {
+        await window.electronAPI.store.delete('token');
+        await window.electronAPI.store.delete('refreshToken');
+    } catch (error) {
+        console.error('[Auth] Erreur lors du nettoyage:', error);
+    }
+    
+    // Afficher un message approprié
+    if (data.reason === 'invalid_token') {
+        showLoginError('Votre session a expiré. Veuillez vous reconnecter.');
+    } else {
+        showLoginError('Vous avez été déconnecté.');
+    }
+    
+    // Retourner à la page de connexion
+    showLoginPage();
+    
+    // Restaurer le formulaire
+    await restoreLoginForm();
+});
+
 // Utilitaires UI
 function setLoginLoading(loading) {
     const loginBtn = document.getElementById('login-btn');
