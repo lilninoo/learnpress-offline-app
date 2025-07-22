@@ -7,10 +7,16 @@ const log = require('electron-log');
 const { machineIdSync } = require('node-machine-id');
 const contextMenu = require('electron-context-menu');
 const crypto = require('crypto');
+const { SecureMediaPlayer } = require('./lib/secure-media-player');
+let mediaPlayer = null;
+
 
 // Import des modules personnalisés
 const LearnPressAPIClient = require('./lib/api-client');
 const SecureDatabase = require('./lib/database');
+const DownloadManager = require('./lib/download-manager');
+let downloadManager = null;
+
 const { setupIpcHandlers } = require('./lib/ipc-handlers');
 const errorHandler = require('./lib/error-handler');
 
@@ -569,6 +575,15 @@ app.whenReady().then(async () => {
         
         // Initialiser la base de données
         await initializeDatabase();
+		// Initialiser le lecteur média sécurisé
+		const encryptionKey = getOrCreateEncryptionKey(); // si pas déjà défini
+		mediaPlayer = new SecureMediaPlayer(encryptionKey);
+		await mediaPlayer.initialize();
+		
+	// Créer le gestionnaire de téléchargement après l'init de la DB
+		const encryption = { key: encryptionKey }; // si tu as un vrai module, adapte
+		downloadManager = new DownloadManager(database, encryption, apiClient);
+
 
         // Créer les fenêtres
         createSplashWindow();
@@ -576,25 +591,28 @@ app.whenReady().then(async () => {
         createMenu();
 
         // Configurer les gestionnaires IPC
-        setupIpcHandlers(ipcMain, {
-            store,
-            deviceId,
-            app,
-            dialog,
-            mainWindow,
-            getApiClient: () => apiClient,
-            setApiClient: (client) => { 
-                apiClient = client;
-                if (client) {
-                    startMembershipCheck();
-                } else {
-                    stopMembershipCheck();
-                }
-            },
-            getDatabase: () => database,
-            errorHandler,
-            config
-        });
+		setupIpcHandlers(ipcMain, {
+			store,
+			deviceId,
+			app,
+			dialog,
+			mainWindow,
+			getApiClient: () => apiClient,
+			setApiClient: (client) => { 
+				apiClient = client;
+				if (client) {
+					startMembershipCheck();
+				} else {
+					stopMembershipCheck();
+				}
+			},
+			getDatabase: () => database,
+			getDownloadManager: () => downloadManager, // ✅ AJOUT
+			getMediaPlayer: () => mediaPlayer,
+			errorHandler,
+			config
+		});
+
 
         // Démarrer la maintenance
         startMaintenance();
@@ -622,15 +640,18 @@ app.whenReady().then(async () => {
     }
 });
 
-app.on('window-all-closed', () => {
+app.on('window-all-closed', async () => {
     stopMembershipCheck();
     stopMaintenance();
     
     if (database) {
         database.close();
     }
-
-    if (process.platform !== 'darwin') {
+	
+	if (mediaPlayer) {
+		await mediaPlayer.cleanup();
+	}
+		if (process.platform !== 'darwin') {
         app.quit();
     }
 });
