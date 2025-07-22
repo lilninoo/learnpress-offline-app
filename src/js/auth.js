@@ -116,21 +116,35 @@ function showDashboard() {
 }
 
 // Initialiser le dashboard après connexion
+// Dans src/js/auth.js, remplacer initializeDashboard() :
+
 async function initializeDashboard() {
     try {
+        console.log('Initialisation du dashboard...');
+        
         // Afficher le nom d'utilisateur
         const userDisplayName = document.getElementById('user-display-name');
         if (userDisplayName && window.AuthState.user) {
-            userDisplayName.textContent = window.AuthState.user.username;
+            userDisplayName.textContent = window.AuthState.user.username || 'Utilisateur';
         }
         
-        // Charger les cours si la fonction existe
-        if (window.loadCourses) {
-            console.log('Chargement des cours...');
-            await window.loadCourses();
-        }
+        // S'assurer que toutes les fonctions sont disponibles
+        await new Promise(resolve => {
+            const checkFunctions = () => {
+                if (window.loadCourses && window.coursesManager && window.syncManager) {
+                    resolve();
+                } else {
+                    setTimeout(checkFunctions, 100);
+                }
+            };
+            checkFunctions();
+        });
         
-        // Initialiser la synchronisation si le manager existe
+        // Charger les cours
+        console.log('Chargement des cours...');
+        await window.loadCourses();
+        
+        // Initialiser la synchronisation si disponible
         if (window.syncManager) {
             console.log('Initialisation de la synchronisation...');
             window.syncManager.initializeSync();
@@ -142,6 +156,7 @@ async function initializeDashboard() {
         }
         
         console.log('Dashboard initialisé avec succès');
+        
     } catch (error) {
         console.error('Erreur lors de l\'initialisation du dashboard:', error);
         showError('Erreur lors de l\'initialisation de l\'interface');
