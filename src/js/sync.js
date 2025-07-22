@@ -529,3 +529,32 @@ document.head.insertAdjacentHTML('beforeend', syncStyles);
 document.addEventListener('DOMContentLoaded', () => {
     initializeSync();
 });
+
+
+class OfflineMode {
+    constructor() {
+        this.isOffline = false;
+        this.pendingActions = [];
+    }
+    
+    enableOfflineMode() {
+        this.isOffline = true;
+        this.disableOnlineFeatures();
+    }
+
+    disableOnlineFeatures() {
+        // À implémenter : désactiver les boutons ou fonctionnalités online
+    }
+    
+    queueAction(action) {
+        this.pendingActions.push({
+            ...action,
+            timestamp: Date.now()
+        });
+    }
+    
+    async syncPendingActions() {
+        // Synchroniser quand la connexion revient
+    }
+}
+
