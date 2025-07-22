@@ -343,55 +343,28 @@ async function loadUserInfo() {
 }
 
 // Charger les cours
+// Dans src/js/app.js, modifier loadCourses() :
+
 async function loadCourses() {
     const container = document.getElementById('courses-container');
-    if (!container) {
-        console.warn('Container courses-container non trouvé');
-        return;
-    }
-    
     container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
     
     try {
-        const response = await window.electronAPI.db.getAllCourses();
+        // Utiliser la nouvelle API pour récupérer les cours de l'utilisateur
+        const response = await window.electronAPI.api.getUserCourses({
+            enrolled_only: true,
+            page: 1,
+            per_page: 50
+        });
         
         if (!response.success) {
             throw new Error(response.error);
         }
         
-        const courses = response.result || [];
-        
-        if (courses.length === 0) {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <svg width="64" height="64" viewBox="0 0 24 24" fill="currentColor" opacity="0.3">
-                        <path d="M12 2l-5.5 9h11z"/>
-                        <circle cx="17.5" cy="17.5" r="4.5"/>
-                        <path d="M3 13.5h8v8H3z"/>
-                    </svg>
-                    <h3>Aucun cours téléchargé</h3>
-                    <p>Cliquez sur "Télécharger un cours" pour commencer</p>
-                </div>
-            `;
-        } else {
-            container.innerHTML = '<div class="courses-grid" id="courses-grid"></div>';
-            const grid = document.getElementById('courses-grid');
-            
-            for (const course of courses) {
-                try {
-                    const progressResponse = await window.electronAPI.db.getCourseProgress(course.course_id);
-                    const progress = progressResponse.success ? progressResponse.result : null;
-                    const card = createCourseCard(course, progress);
-                    grid.appendChild(card);
-                } catch (error) {
-                    console.error('Erreur lors de la création de la carte cours:', error);
-                    // Continuer avec les autres cours
-                }
-            }
-        }
+        const courses = response.courses;
+        // ... reste du code
     } catch (error) {
-        console.error('Erreur lors du chargement des cours:', error);
-        container.innerHTML = '<div class="message message-error">Erreur lors du chargement des cours</div>';
+        console.error('Erreur:', error);
     }
 }
 
@@ -874,4 +847,5 @@ window.openCourse = openCourse;
 window.deleteCourse = deleteCourse;
 window.searchCourses = searchCourses;
 window.updateStorageInfo = updateStorageInfo;
+window.showDownloadModal = showDownloadModal;
 window.AppState = AppState;
