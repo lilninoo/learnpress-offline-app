@@ -49,6 +49,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     downloadMedia: (mediaUrl, lessonId) => 
       ipcRenderer.invoke('api-download-media', { mediaUrl, lessonId })
   },
+
+   // Download operations
+  download: {
+    downloadCourse: (courseId, options) => 
+      ipcRenderer.invoke('download-course', { courseId, options }),
+    cancelDownload: (downloadId) => 
+      ipcRenderer.invoke('cancel-download', downloadId),
+    getAllDownloads: () => 
+      ipcRenderer.invoke('get-all-downloads'),
+    getDownloadStatus: (downloadId) => 
+      ipcRenderer.invoke('get-download-status', downloadId)
+  },
   
   // Database operations
   db: {
