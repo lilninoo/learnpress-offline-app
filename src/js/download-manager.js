@@ -111,10 +111,11 @@ class DownloadManager {
             
             // Créer le dossier du cours
             const coursePath = path.join(
-                require('electron').app.getPath('userData'),
+                this.db.dbPath.replace('courses.db', ''), // Utiliser le chemin de la DB
                 'courses',
                 `course-${course.id}`
             );
+
             await fs.mkdir(coursePath, { recursive: true });
             
             // 1. Créer le package de téléchargement côté serveur
