@@ -1,4 +1,4 @@
--- schema.sql - Structure de la base de données LearnPress Offline
+-- schema.sql - Structure complète de la base de données LearnPress Offline
 -- Base de données SQLite avec support du chiffrement
 
 -- =====================================================
@@ -26,7 +26,6 @@ CREATE TABLE IF NOT EXISTS courses (
     version INTEGER DEFAULT 1,
     checksum TEXT,  -- Pour vérifier l'intégrité
     metadata TEXT,  -- JSON pour données supplémentaires
-    -- Colonnes ajoutées pour cohérence avec database.js
     file_size INTEGER DEFAULT 0,
     download_progress INTEGER DEFAULT 100,
     is_favorite BOOLEAN DEFAULT 0,
@@ -71,7 +70,6 @@ CREATE TABLE IF NOT EXISTS lessons (
     preview BOOLEAN DEFAULT 0,  -- Leçon en aperçu gratuit
     points INTEGER DEFAULT 0,  -- Points attribués à la complétion
     attachments TEXT,  -- JSON array des pièces jointes
-    -- Colonnes ajoutées pour cohérence
     difficulty TEXT DEFAULT 'normal',
     estimated_time INTEGER DEFAULT 0,
     views_count INTEGER DEFAULT 0,
@@ -101,7 +99,6 @@ CREATE TABLE IF NOT EXISTS media (
     resolution TEXT,  -- Pour les vidéos (ex: "1920x1080")
     checksum TEXT,
     downloaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    -- Colonnes ajoutées
     bitrate INTEGER,
     quality TEXT,
     thumbnail_path TEXT,
@@ -130,7 +127,6 @@ CREATE TABLE IF NOT EXISTS quizzes (
     passed BOOLEAN DEFAULT 0,
     attempts INTEGER DEFAULT 0,
     last_attempt DATETIME,
-    -- Colonnes ajoutées
     best_score REAL DEFAULT 0,
     time_spent INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -155,7 +151,6 @@ CREATE TABLE IF NOT EXISTS assignments (
     grade REAL,
     feedback_encrypted TEXT,
     graded_at DATETIME,
-    -- Colonnes ajoutées
     status TEXT DEFAULT 'pending',
     submission_count INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -177,7 +172,6 @@ CREATE TABLE IF NOT EXISTS sync_log (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     synced_at DATETIME,
     error_message TEXT,
-    -- Colonnes ajoutées
     priority INTEGER DEFAULT 5,
     next_retry_at DATETIME,
     max_retries INTEGER DEFAULT 3
@@ -196,7 +190,6 @@ CREATE TABLE IF NOT EXISTS certificates (
     grade REAL,
     file_path_encrypted TEXT,
     metadata TEXT,  -- JSON
-    -- Colonnes ajoutées
     template_id INTEGER,
     valid_until DATETIME,
     verification_url TEXT,
@@ -214,7 +207,6 @@ CREATE TABLE IF NOT EXISTS notes (
     color TEXT DEFAULT '#ffeb3b',  -- Couleur du surlignage
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    -- Colonne ajoutée
     type TEXT DEFAULT 'note',
     FOREIGN KEY (lesson_id) REFERENCES lessons(lesson_id) ON DELETE CASCADE
 );
@@ -245,7 +237,6 @@ CREATE TABLE IF NOT EXISTS user_settings (
     key TEXT PRIMARY KEY,
     value TEXT,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    -- Colonnes ajoutées
     type TEXT DEFAULT 'string',
     description TEXT
 );
@@ -258,13 +249,12 @@ CREATE TABLE IF NOT EXISTS cache (
     value TEXT,
     expires_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    -- Colonnes ajoutées
     accessed_count INTEGER DEFAULT 0,
     last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 -- =====================================================
--- TABLE DES STATISTIQUES D'UTILISATION (Nouvelle)
+-- TABLE DES STATISTIQUES D'UTILISATION
 -- =====================================================
 CREATE TABLE IF NOT EXISTS usage_stats (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -276,8 +266,9 @@ CREATE TABLE IF NOT EXISTS usage_stats (
 );
 
 -- =====================================================
--- INDEX POUR LES PERFORMANCES
+-- INDEX POUR LES PERFORMANCES (CORRIGÉS)
 -- =====================================================
+-- Index de base
 CREATE INDEX IF NOT EXISTS idx_lessons_section ON lessons(section_id);
 CREATE INDEX IF NOT EXISTS idx_sections_course ON sections(course_id);
 CREATE INDEX IF NOT EXISTS idx_media_lesson ON media(lesson_id);
@@ -291,13 +282,15 @@ CREATE INDEX IF NOT EXISTS idx_discussions_lesson ON discussions(lesson_id);
 CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache(expires_at);
 CREATE INDEX IF NOT EXISTS idx_courses_expires ON courses(expires_at);
 
--- Index supplémentaires pour les nouvelles colonnes
-CREATE INDEX IF NOT EXISTS idx_lessons_completed ON lessons(completed, course_id);
+-- Index composites pour les requêtes courantes (CORRIGÉS)
+CREATE INDEX IF NOT EXISTS idx_lessons_completed ON lessons(completed, section_id);
 CREATE INDEX IF NOT EXISTS idx_lessons_progress ON lessons(progress, completed);
 CREATE INDEX IF NOT EXISTS idx_courses_category ON courses(category, downloaded_at);
 CREATE INDEX IF NOT EXISTS idx_sync_priority ON sync_log(priority, created_at, synced);
 CREATE INDEX IF NOT EXISTS idx_media_type_size ON media(type, size);
 CREATE INDEX IF NOT EXISTS idx_usage_stats_event ON usage_stats(event_type, created_at);
+
+-- Index pour la recherche textuelle
 CREATE INDEX IF NOT EXISTS idx_courses_title ON courses(title);
 CREATE INDEX IF NOT EXISTS idx_lessons_title ON lessons(title);
 CREATE INDEX IF NOT EXISTS idx_courses_instructor ON courses(instructor_name);
@@ -337,11 +330,12 @@ FROM quizzes q
 JOIN lessons l ON q.lesson_id = l.lesson_id;
 
 -- =====================================================
--- TRIGGERS
+-- TRIGGERS (CORRIGÉS)
 -- =====================================================
 
 -- Mise à jour automatique de last_accessed
-CREATE TRIGGER IF NOT EXISTS update_course_access 
+DROP TRIGGER IF EXISTS update_course_access;
+CREATE TRIGGER update_course_access 
 AFTER UPDATE ON lessons
 WHEN NEW.completed = 1 OR NEW.progress > OLD.progress
 BEGIN
@@ -357,7 +351,8 @@ BEGIN
 END;
 
 -- Mise à jour du compteur de leçons dans les sections
-CREATE TRIGGER IF NOT EXISTS update_section_lesson_count
+DROP TRIGGER IF EXISTS update_section_lesson_count;
+CREATE TRIGGER update_section_lesson_count
 AFTER INSERT ON lessons
 BEGIN
     UPDATE sections 
@@ -368,7 +363,8 @@ BEGIN
 END;
 
 -- Ajout automatique à la file de synchronisation
-CREATE TRIGGER IF NOT EXISTS add_to_sync_on_progress
+DROP TRIGGER IF EXISTS add_to_sync_on_progress;
+CREATE TRIGGER add_to_sync_on_progress
 AFTER UPDATE ON lessons
 WHEN NEW.progress > OLD.progress OR NEW.completed != OLD.completed
 BEGIN
@@ -378,14 +374,16 @@ BEGIN
 END;
 
 -- Mise à jour des timestamps
-CREATE TRIGGER IF NOT EXISTS update_lesson_timestamp
+DROP TRIGGER IF EXISTS update_lesson_timestamp;
+CREATE TRIGGER update_lesson_timestamp
 AFTER UPDATE ON lessons
 BEGIN
     UPDATE lessons SET updated_at = CURRENT_TIMESTAMP WHERE lesson_id = NEW.lesson_id;
 END;
 
 -- Mise à jour des statistiques d'usage
-CREATE TRIGGER IF NOT EXISTS track_lesson_completion
+DROP TRIGGER IF EXISTS track_lesson_completion;
+CREATE TRIGGER track_lesson_completion
 AFTER UPDATE ON lessons
 WHEN NEW.completed = 1 AND OLD.completed = 0
 BEGIN
@@ -395,7 +393,8 @@ BEGIN
 END;
 
 -- Nettoyage automatique du cache expiré
-CREATE TRIGGER IF NOT EXISTS cleanup_expired_cache
+DROP TRIGGER IF EXISTS cleanup_expired_cache;
+CREATE TRIGGER cleanup_expired_cache
 AFTER INSERT ON cache
 BEGIN
     DELETE FROM cache WHERE expires_at < CURRENT_TIMESTAMP;
