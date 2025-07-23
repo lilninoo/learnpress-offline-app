@@ -169,7 +169,13 @@ function initializeStore() {
         theme: { type: 'string', default: 'auto' },
         language: { type: 'string', default: 'fr' },
         membershipRestrictions: { type: 'object', default: {} },
-        windowBounds: { type: 'object', default: null }
+          windowBounds: { 
+            type: 'object', 
+            default: {
+                width: 1400,
+                height: 900
+            }
+        }
     };
 
     try {
