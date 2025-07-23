@@ -7,23 +7,78 @@ window.AuthState = {
     apiUrl: null
 };
 
-// Écouter l'événement de succès de login depuis le main process
-// Écouter l'événement de succès de login depuis le main process
+// IMPORTANT : Configurer l'écouteur AVANT le DOMContentLoaded pour ne pas rater l'événement
 window.electronAPI.on('login-success', (user) => {
-    console.log('[Auth] Événement login-success reçu');
+    console.log('[Auth] Événement login-success reçu depuis le main process');
     window.AuthState.isLoggedIn = true;
     window.AuthState.user = user;
-    showDashboard();
     
-    // Attendre que le dashboard soit prêt
-    setTimeout(() => {
-        if (window.loadCourses) {
-            window.loadCourses();
-        } else if (window.coursesManager && window.coursesManager.loadCourses) {
-            window.coursesManager.loadCourses();
-        }
-    }, 500);
+    // S'assurer que le DOM est prêt avant de manipuler l'interface
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            showDashboard();
+            initializeDashboardAfterLogin();
+        });
+    } else {
+        showDashboard();
+        initializeDashboardAfterLogin();
+    }
 });
+
+// Fonction pour initialiser le dashboard après login
+// Fonction pour initialiser le dashboard après login
+function initializeDashboardAfterLogin() {
+    if (window.ensureCoursesLoaded) {
+        window.ensureCoursesLoaded().catch(error => {
+            console.error('[Auth] Erreur finale:', error);
+            // Afficher un message d'erreur à l'utilisateur
+            const container = document.getElementById('courses-container');
+            if (container) {
+                container.innerHTML = `
+                    <div class="message message-error">
+                        <p>Impossible de charger les cours</p>
+                        <p style="font-size: 0.9em; margin-top: 8px;">Erreur: ${error.message}</p>
+                        <button class="btn btn-primary" style="margin-top: 12px;" onclick="location.reload()">
+                            Recharger l'application
+                        </button>
+                    </div>
+                `;
+            }
+        });
+    } else {
+        // Fallback sur l'ancienne méthode avec plus de robustesse
+        const checkAndLoadCourses = () => {
+            const container = document.getElementById('courses-container') || 
+                             document.getElementById('courses-list');
+            
+            if (!container) {
+                console.log('[Auth] Container non trouvé, nouvelle tentative dans 200ms...');
+                setTimeout(checkAndLoadCourses, 200);
+                return;
+            }
+            
+            if (window.loadCourses) {
+                console.log('[Auth] Chargement des cours...');
+                window.loadCourses().catch(error => {
+                    console.error('[Auth] Erreur lors du chargement des cours:', error);
+                    if (container) {
+                        container.innerHTML = `
+                            <div class="empty-state">
+                                <p>Impossible de charger les cours</p>
+                                <button class="btn btn-primary" onclick="window.loadCourses()">Réessayer</button>
+                            </div>
+                        `;
+                    }
+                });
+            } else {
+                console.log('[Auth] Fonction loadCourses non trouvée, nouvelle tentative dans 200ms...');
+                setTimeout(checkAndLoadCourses, 200);
+            }
+        };
+        
+        setTimeout(checkAndLoadCourses, 800);
+    }
+}
 
 // Vérifier l'auto-login au chargement
 document.addEventListener('DOMContentLoaded', async () => {
@@ -40,6 +95,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             window.AuthState.apiUrl = autoLoginResult.apiUrl;
             
             showDashboard();
+            initializeDashboardAfterLogin();
             return;
         }
     } catch (error) {
@@ -144,6 +200,7 @@ function showDashboard() {
 }
 
 // Initialiser le dashboard
+// Initialiser le dashboard
 async function initializeDashboard() {
     try {
         console.log('[Auth] Initialisation du dashboard...');
@@ -156,13 +213,7 @@ async function initializeDashboard() {
                                          'Utilisateur';
         }
         
-        // Charger les cours après un délai
-        setTimeout(async () => {
-            if (window.loadCourses) {
-                console.log('[Auth] Chargement des cours...');
-                await window.loadCourses();
-            }
-        }, 500);
+        // NE PAS charger les cours ici, laisser initializeDashboardAfterLogin le faire
         
         // Initialiser la synchronisation
         if (window.syncManager) {
@@ -240,17 +291,24 @@ function setupLoginForm() {
                     await window.electronAPI.store.delete('savedUsername');
                 }
                 
-                // Mettre à jour l'état local
+                // Mettre à jour l'état local IMMÉDIATEMENT
                 window.AuthState.isLoggedIn = true;
                 window.AuthState.user = result.user || { username: username };
                 window.AuthState.apiUrl = apiUrl;
                 
                 await window.electronAPI.store.set('username', username);
                 
-                // IMPORTANT : Forcer la redirection
-                console.log('[Auth] Redirection vers le dashboard...');
+                // IMPORTANT : Masquer le loader AVANT de changer de page
                 setLoginLoading(false);
+                
+                // REDIRECTION DIRECTE SANS ATTENDRE L'ÉVÉNEMENT
+                console.log('[Auth] Redirection immédiate vers le dashboard...');
                 showDashboard();
+                
+                // Charger les cours après la redirection
+                setTimeout(() => {
+                    initializeDashboardAfterLogin();
+                }, 100);
                 
             } else {
                 // Gérer les erreurs
@@ -308,7 +366,6 @@ async function performLogout() {
     }
 }
 
-
 // Écouter l'événement de déconnexion forcée
 window.electronAPI.on('force-logout', async (data) => {
     console.log('[Auth] Déconnexion forcée reçue:', data);
@@ -329,6 +386,8 @@ window.electronAPI.on('force-logout', async (data) => {
     // Afficher un message approprié
     if (data.reason === 'invalid_token') {
         showLoginError('Votre session a expiré. Veuillez vous reconnecter.');
+    } else if (data.reason === 'refresh_token_expired') {
+        showLoginError(data.message || 'Votre session a expiré. Veuillez vous reconnecter.');
     } else {
         showLoginError('Vous avez été déconnecté.');
     }
@@ -345,7 +404,22 @@ function setLoginLoading(loading) {
     const loginBtn = document.getElementById('login-btn');
     if (loginBtn) {
         loginBtn.disabled = loading;
-        loginBtn.textContent = loading ? 'Connexion en cours...' : 'Se connecter';
+        
+        const btnText = loginBtn.querySelector('.btn-text');
+        const btnLoader = loginBtn.querySelector('.btn-loader');
+        
+        if (btnText && btnLoader) {
+            if (loading) {
+                btnText.classList.add('hidden');
+                btnLoader.classList.remove('hidden');
+            } else {
+                btnText.classList.remove('hidden');
+                btnLoader.classList.add('hidden');
+            }
+        } else {
+            // Fallback si la structure n'est pas trouvée
+            loginBtn.textContent = loading ? 'Connexion en cours...' : 'Se connecter';
+        }
     }
 }
 
