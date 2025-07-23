@@ -1,4 +1,4 @@
-// src/js/app.js - Version COMPLÈTE
+// src/js/app.js - Version COMPLÈTE avec les nouvelles fonctions
 
 // État global de l'application
 const AppState = {
@@ -92,6 +92,77 @@ function initializeUI() {
     updateAppInfo();
 }
 
+// ========== NOUVELLES FONCTIONS AJOUTÉES ==========
+
+// Fonction robuste pour s'assurer que les cours sont chargés
+window.ensureCoursesLoaded = async function() {
+    console.log('[App] Ensuring courses are loaded...');
+    
+    // Attendre que le DOM soit prêt
+    if (document.readyState === 'loading') {
+        console.log('[App] Waiting for DOM to be ready...');
+        await new Promise(resolve => {
+            document.addEventListener('DOMContentLoaded', resolve);
+        });
+    }
+    
+    // Attendre que les modules soient chargés
+    let attempts = 0;
+    const maxAttempts = 20; // 4 secondes max
+    
+    while (attempts < maxAttempts) {
+        const container = document.getElementById('courses-container') || 
+                         document.getElementById('courses-list');
+        
+        console.log(`[App] Attempt ${attempts + 1}/${maxAttempts} - Container: ${!!container}, loadCourses: ${!!window.loadCourses}`);
+        
+        if (container && window.loadCourses) {
+            try {
+                console.log('[App] Container and function found, loading courses...');
+                await window.loadCourses();
+                console.log('[App] Courses loaded successfully');
+                return true;
+            } catch (error) {
+                console.error('[App] Error loading courses:', error);
+                // Si c'est une erreur réseau, on peut réessayer
+                if (error.message && error.message.includes('network')) {
+                    console.log('[App] Network error, will retry...');
+                } else {
+                    // Pour les autres erreurs, on arrête
+                    throw error;
+                }
+            }
+        }
+        
+        attempts++;
+        await new Promise(resolve => setTimeout(resolve, 200));
+    }
+    
+    // Si on arrive ici, c'est qu'on a dépassé le timeout
+    const container = document.getElementById('courses-container');
+    if (!container) {
+        throw new Error('Container de cours introuvable après 4 secondes');
+    } else if (!window.loadCourses) {
+        throw new Error('Fonction loadCourses introuvable après 4 secondes');
+    } else {
+        throw new Error('Timeout: Impossible de charger les cours après 20 tentatives');
+    }
+};
+
+// Ajouter aussi une fonction pour débugger
+window.debugLoadingState = function() {
+    console.log('[Debug] Loading state:');
+    console.log('- DOM ready:', document.readyState);
+    console.log('- Auth state:', window.AuthState);
+    console.log('- Courses container:', !!document.getElementById('courses-container'));
+    console.log('- Courses list:', !!document.getElementById('courses-list'));
+    console.log('- loadCourses function:', !!window.loadCourses);
+    console.log('- coursesManager:', !!window.coursesManager);
+    console.log('- Active page:', document.querySelector('.page.active')?.id);
+};
+
+// ========== FIN DES NOUVELLES FONCTIONS ==========
+
 // Gérer la navigation
 function handleNavigation(e) {
     e.preventDefault();
@@ -151,6 +222,7 @@ function showContentPage(pageId) {
         }
     }
 }
+
 // Charger le contenu d'une page
 function loadPageContent(page) {
     switch (page) {
@@ -284,7 +356,6 @@ async function loadDashboardData() {
     }
 }
 
-// Charger les cours
 // Charger les cours - CORRECTION
 async function loadCourses() {
     const container = document.getElementById('courses-container');
@@ -353,7 +424,6 @@ async function loadCourses() {
     }
 }
 
-
 // Afficher les cours
 async function displayCourses(courses, container, isLocal = false) {
     if (!courses || courses.length === 0) {
@@ -386,8 +456,7 @@ async function displayCourses(courses, container, isLocal = false) {
         }
     }
 
-
-// Afficher chaque cours
+    // Afficher chaque cours
     for (const course of courses) {
         try {
             // Récupérer la progression si disponible
@@ -416,7 +485,6 @@ async function displayCourses(courses, container, isLocal = false) {
         }
     }
 }
-
 
 // Mettre à jour les statistiques du dashboard
 function updateDashboardStats(courses) {
@@ -452,8 +520,6 @@ function updateDashboardStats(courses) {
         console.error('[App] Erreur lors de la mise à jour des stats:', error);
     }
 }
-
-
 
 // Créer une carte de cours
 async function createCourseCard(course) {
