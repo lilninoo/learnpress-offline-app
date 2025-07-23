@@ -8,11 +8,21 @@ window.AuthState = {
 };
 
 // Écouter l'événement de succès de login depuis le main process
+// Écouter l'événement de succès de login depuis le main process
 window.electronAPI.on('login-success', (user) => {
     console.log('[Auth] Événement login-success reçu');
     window.AuthState.isLoggedIn = true;
     window.AuthState.user = user;
     showDashboard();
+    
+    // Attendre que le dashboard soit prêt
+    setTimeout(() => {
+        if (window.loadCourses) {
+            window.loadCourses();
+        } else if (window.coursesManager && window.coursesManager.loadCourses) {
+            window.coursesManager.loadCourses();
+        }
+    }, 500);
 });
 
 // Vérifier l'auto-login au chargement
