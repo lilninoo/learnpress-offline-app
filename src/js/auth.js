@@ -1,4 +1,4 @@
-// src/js/auth.js - Version corrigée complète
+// src/js/auth.js - Gestion complète de l'authentification
 
 // État d'authentification global
 window.AuthState = {
@@ -26,59 +26,129 @@ window.electronAPI.on('login-success', (user) => {
 });
 
 // Fonction pour initialiser le dashboard après login
-// Fonction pour initialiser le dashboard après login
 function initializeDashboardAfterLogin() {
-    if (window.ensureCoursesLoaded) {
-        window.ensureCoursesLoaded().catch(error => {
-            console.error('[Auth] Erreur finale:', error);
-            // Afficher un message d'erreur à l'utilisateur
+    console.log('[Auth] Initialisation du dashboard après login...');
+    
+    // S'assurer que l'utilisateur est affiché
+    const userDisplayName = document.getElementById('user-display-name');
+    if (userDisplayName && window.AuthState.user) {
+        userDisplayName.textContent = window.AuthState.user.displayName || 
+                                     window.AuthState.user.username || 
+                                     'Utilisateur';
+    }
+    
+    // Attendre que tous les modules soient chargés
+    let checkInterval;
+    let attempts = 0;
+    const maxAttempts = 50; // 10 secondes max
+    
+    const checkAndLoadCourses = async () => {
+        attempts++;
+        
+        // Vérifier si les modules sont prêts
+        const modulesReady = !!(
+            window.coursesManager && 
+            window.electronAPI && 
+            document.getElementById('courses-container')
+        );
+        
+        console.log(`[Auth] Tentative ${attempts}/${maxAttempts} - Modules prêts: ${modulesReady}`);
+        
+        if (modulesReady) {
+            clearInterval(checkInterval);
+            
+            try {
+                // Utiliser directement coursesManager.loadCourses qui est plus robuste
+                if (window.coursesManager && window.coursesManager.loadCourses) {
+                    console.log('[Auth] Chargement des cours via coursesManager...');
+                    await window.coursesManager.loadCourses();
+                } else if (window.loadCourses) {
+                    console.log('[Auth] Chargement des cours via loadCourses global...');
+                    await window.loadCourses();
+                }
+                
+                // Charger aussi les statistiques
+                if (window.updateStats) {
+                    await window.updateStats();
+                }
+                
+                // Initialiser la synchronisation
+                if (window.syncManager) {
+                    window.syncManager.initializeSync();
+                }
+                
+                console.log('[Auth] Dashboard complètement initialisé');
+                
+            } catch (error) {
+                console.error('[Auth] Erreur lors du chargement des cours:', error);
+                
+                // Afficher un message d'erreur dans l'interface
+                const container = document.getElementById('courses-container');
+                if (container) {
+                    container.innerHTML = `
+                        <div class="message message-error">
+                            <p>Impossible de charger les cours</p>
+                            <p style="font-size: 0.9em; margin-top: 8px;">Erreur: ${error.message}</p>
+                            <button class="btn btn-primary" style="margin-top: 12px;" onclick="retryLoadCourses()">
+                                Réessayer
+                            </button>
+                        </div>
+                    `;
+                }
+            }
+        } else if (attempts >= maxAttempts) {
+            clearInterval(checkInterval);
+            console.error('[Auth] Timeout - Impossible de charger les modules');
+            
+            // Afficher un message d'erreur
             const container = document.getElementById('courses-container');
             if (container) {
                 container.innerHTML = `
                     <div class="message message-error">
-                        <p>Impossible de charger les cours</p>
-                        <p style="font-size: 0.9em; margin-top: 8px;">Erreur: ${error.message}</p>
-                        <button class="btn btn-primary" style="margin-top: 12px;" onclick="location.reload()">
+                        <p>Les modules n'ont pas pu être chargés</p>
+                        <button class="btn btn-primary" onclick="location.reload()">
                             Recharger l'application
                         </button>
                     </div>
                 `;
             }
-        });
-    } else {
-        // Fallback sur l'ancienne méthode avec plus de robustesse
-        const checkAndLoadCourses = () => {
-            const container = document.getElementById('courses-container') || 
-                             document.getElementById('courses-list');
-            
-            if (!container) {
-                console.log('[Auth] Container non trouvé, nouvelle tentative dans 200ms...');
-                setTimeout(checkAndLoadCourses, 200);
-                return;
-            }
-            
-            if (window.loadCourses) {
-                console.log('[Auth] Chargement des cours...');
-                window.loadCourses().catch(error => {
-                    console.error('[Auth] Erreur lors du chargement des cours:', error);
-                    if (container) {
-                        container.innerHTML = `
-                            <div class="empty-state">
-                                <p>Impossible de charger les cours</p>
-                                <button class="btn btn-primary" onclick="window.loadCourses()">Réessayer</button>
-                            </div>
-                        `;
-                    }
-                });
-            } else {
-                console.log('[Auth] Fonction loadCourses non trouvée, nouvelle tentative dans 200ms...');
-                setTimeout(checkAndLoadCourses, 200);
-            }
-        };
-        
-        setTimeout(checkAndLoadCourses, 800);
-    }
+        }
+    };
+    
+    // Vérifier toutes les 200ms
+    checkInterval = setInterval(checkAndLoadCourses, 200);
+    
+    // Première vérification immédiate
+    checkAndLoadCourses();
 }
+
+// Fonction globale pour le retry
+window.retryLoadCourses = async function() {
+    const container = document.getElementById('courses-container');
+    if (container) {
+        container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+    }
+    
+    try {
+        if (window.coursesManager && window.coursesManager.loadCourses) {
+            await window.coursesManager.loadCourses();
+        } else if (window.loadCourses) {
+            await window.loadCourses();
+        }
+    } catch (error) {
+        console.error('[Auth] Erreur lors du retry:', error);
+        if (container) {
+            container.innerHTML = `
+                <div class="message message-error">
+                    <p>Nouvelle erreur: ${error.message}</p>
+                    <button class="btn btn-primary" onclick="retryLoadCourses()">
+                        Réessayer encore
+                    </button>
+                </div>
+            `;
+        }
+    }
+};
 
 // Vérifier l'auto-login au chargement
 document.addEventListener('DOMContentLoaded', async () => {
@@ -105,6 +175,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log('[Auth] Affichage de la page de connexion');
     showLoginPage();
     await restoreLoginForm();
+    setupLoginForm();
 });
 
 // Restaurer les valeurs du formulaire
@@ -200,7 +271,6 @@ function showDashboard() {
 }
 
 // Initialiser le dashboard
-// Initialiser le dashboard
 async function initializeDashboard() {
     try {
         console.log('[Auth] Initialisation du dashboard...');
@@ -251,10 +321,17 @@ function setupLoginForm() {
             return;
         }
         
-        const apiUrl = apiUrlInput.value.trim();
+        let apiUrl = apiUrlInput.value.trim();
         const username = usernameInput.value.trim();
         const password = passwordInput.value;
         const rememberMe = rememberCheckbox ? rememberCheckbox.checked : false;
+        
+        // Normaliser l'URL
+        if (!apiUrl.startsWith('http://') && !apiUrl.startsWith('https://')) {
+            apiUrl = 'https://' + apiUrl;
+        }
+        // Retirer le slash final
+        apiUrl = apiUrl.replace(/\/$/, '');
         
         // Validation
         if (!apiUrl || !username || !password) {
@@ -274,10 +351,10 @@ function setupLoginForm() {
         try {
             console.log('[Auth] Tentative de connexion à:', apiUrl);
             
-            // Sauvegarder l'URL
+            // Sauvegarder l'URL normalisée
             await window.electronAPI.store.set('savedApiUrl', apiUrl);
             
-            // Tenter la connexion
+            // Tenter la connexion avec l'URL normalisée
             const result = await window.electronAPI.api.login(apiUrl, username, password);
             console.log('[Auth] Résultat de connexion:', result);
             
@@ -301,14 +378,15 @@ function setupLoginForm() {
                 // IMPORTANT : Masquer le loader AVANT de changer de page
                 setLoginLoading(false);
                 
-                // REDIRECTION DIRECTE SANS ATTENDRE L'ÉVÉNEMENT
-                console.log('[Auth] Redirection immédiate vers le dashboard...');
-                showDashboard();
-                
-                // Charger les cours après la redirection
+                // L'événement login-success gérera la redirection, mais on fait aussi une redirection directe
+                // au cas où l'événement ne serait pas reçu
                 setTimeout(() => {
-                    initializeDashboardAfterLogin();
-                }, 100);
+                    if (document.getElementById('login-page').classList.contains('active')) {
+                        console.log('[Auth] Redirection manuelle vers le dashboard...');
+                        showDashboard();
+                        initializeDashboardAfterLogin();
+                    }
+                }, 1000);
                 
             } else {
                 // Gérer les erreurs
@@ -317,14 +395,15 @@ function setupLoginForm() {
                 
                 let errorMessage = result.error || 'Erreur de connexion';
                 
-                if (result.requiresMembership) {
+                // Messages d'erreur plus détaillés
+                if (result.code === 'no_active_membership') {
                     errorMessage = 'Un abonnement actif est requis pour utiliser l\'application';
+                } else if (result.status === 404) {
+                    errorMessage = 'API non trouvée. Vérifiez l\'URL du site et que le plugin col-lms-api est activé';
                 } else if (errorMessage.includes('Invalid username') || errorMessage.includes('invalid_username')) {
                     errorMessage = 'Nom d\'utilisateur ou mot de passe incorrect';
                 } else if (errorMessage.includes('network') || errorMessage.includes('ENOTFOUND')) {
                     errorMessage = 'Erreur de connexion. Vérifiez votre connexion internet et l\'URL du site';
-                } else if (errorMessage.includes('404')) {
-                    errorMessage = 'API non trouvée. Vérifiez que le plugin est installé sur votre site';
                 }
                 
                 showLoginError(errorMessage);
@@ -453,8 +532,6 @@ function isValidUrl(string) {
 // Initialiser les événements au chargement
 document.addEventListener('DOMContentLoaded', () => {
     console.log('[Auth] Configuration des événements');
-    
-    setupLoginForm();
     
     // Bouton de déconnexion
     const logoutBtn = document.getElementById('logout-btn');
