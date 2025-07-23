@@ -25,7 +25,15 @@ CREATE TABLE IF NOT EXISTS courses (
     expires_at DATETIME,
     version INTEGER DEFAULT 1,
     checksum TEXT,  -- Pour vérifier l'intégrité
-    metadata TEXT  -- JSON pour données supplémentaires
+    metadata TEXT,  -- JSON pour données supplémentaires
+    -- Colonnes ajoutées pour cohérence avec database.js
+    file_size INTEGER DEFAULT 0,
+    download_progress INTEGER DEFAULT 100,
+    is_favorite BOOLEAN DEFAULT 0,
+    rating REAL DEFAULT 0,
+    completion_percentage REAL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 -- =====================================================
@@ -40,6 +48,7 @@ CREATE TABLE IF NOT EXISTS sections (
     order_index INTEGER DEFAULT 0,
     lessons_count INTEGER DEFAULT 0,
     duration TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (course_id) REFERENCES courses(course_id) ON DELETE CASCADE
 );
 
@@ -51,7 +60,7 @@ CREATE TABLE IF NOT EXISTS lessons (
     lesson_id INTEGER UNIQUE NOT NULL,
     section_id INTEGER NOT NULL,
     title TEXT NOT NULL,
-    type TEXT NOT NULL,  -- video, text, quiz, assignment, pdf
+    type TEXT NOT NULL,  -- video, text, quiz, assignment, pdf, audio
     content_encrypted TEXT,  -- Contenu HTML chiffré
     duration TEXT,  -- Format: "15m"
     order_index INTEGER DEFAULT 0,
@@ -62,6 +71,14 @@ CREATE TABLE IF NOT EXISTS lessons (
     preview BOOLEAN DEFAULT 0,  -- Leçon en aperçu gratuit
     points INTEGER DEFAULT 0,  -- Points attribués à la complétion
     attachments TEXT,  -- JSON array des pièces jointes
+    -- Colonnes ajoutées pour cohérence
+    difficulty TEXT DEFAULT 'normal',
+    estimated_time INTEGER DEFAULT 0,
+    views_count INTEGER DEFAULT 0,
+    notes_count INTEGER DEFAULT 0,
+    bookmarks TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (section_id) REFERENCES sections(section_id) ON DELETE CASCADE
 );
 
@@ -84,6 +101,12 @@ CREATE TABLE IF NOT EXISTS media (
     resolution TEXT,  -- Pour les vidéos (ex: "1920x1080")
     checksum TEXT,
     downloaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    -- Colonnes ajoutées
+    bitrate INTEGER,
+    quality TEXT,
+    thumbnail_path TEXT,
+    download_priority INTEGER DEFAULT 5,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (lesson_id) REFERENCES lessons(lesson_id) ON DELETE CASCADE,
     FOREIGN KEY (course_id) REFERENCES courses(course_id) ON DELETE CASCADE
 );
@@ -107,6 +130,11 @@ CREATE TABLE IF NOT EXISTS quizzes (
     passed BOOLEAN DEFAULT 0,
     attempts INTEGER DEFAULT 0,
     last_attempt DATETIME,
+    -- Colonnes ajoutées
+    best_score REAL DEFAULT 0,
+    time_spent INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (lesson_id) REFERENCES lessons(lesson_id) ON DELETE CASCADE
 );
 
@@ -127,6 +155,11 @@ CREATE TABLE IF NOT EXISTS assignments (
     grade REAL,
     feedback_encrypted TEXT,
     graded_at DATETIME,
+    -- Colonnes ajoutées
+    status TEXT DEFAULT 'pending',
+    submission_count INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (lesson_id) REFERENCES lessons(lesson_id) ON DELETE CASCADE
 );
 
@@ -135,15 +168,19 @@ CREATE TABLE IF NOT EXISTS assignments (
 -- =====================================================
 CREATE TABLE IF NOT EXISTS sync_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entity_type TEXT NOT NULL,  -- course, lesson, quiz, assignment
+    entity_type TEXT NOT NULL,  -- course, lesson, quiz, assignment, progress, note
     entity_id INTEGER NOT NULL,
-    action TEXT NOT NULL,  -- create, update, delete, complete
+    action TEXT NOT NULL,  -- create, update, delete, complete, progress
     data TEXT,  -- JSON des données à synchroniser
     synced BOOLEAN DEFAULT 0,
     sync_attempts INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     synced_at DATETIME,
-    error_message TEXT
+    error_message TEXT,
+    -- Colonnes ajoutées
+    priority INTEGER DEFAULT 5,
+    next_retry_at DATETIME,
+    max_retries INTEGER DEFAULT 3
 );
 
 -- =====================================================
@@ -159,6 +196,10 @@ CREATE TABLE IF NOT EXISTS certificates (
     grade REAL,
     file_path_encrypted TEXT,
     metadata TEXT,  -- JSON
+    -- Colonnes ajoutées
+    template_id INTEGER,
+    valid_until DATETIME,
+    verification_url TEXT,
     FOREIGN KEY (course_id) REFERENCES courses(course_id) ON DELETE CASCADE
 );
 
@@ -172,7 +213,9 @@ CREATE TABLE IF NOT EXISTS notes (
     position INTEGER,  -- Position dans la vidéo ou le texte
     color TEXT DEFAULT '#ffeb3b',  -- Couleur du surlignage
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    -- Colonne ajoutée
+    type TEXT DEFAULT 'note',
     FOREIGN KEY (lesson_id) REFERENCES lessons(lesson_id) ON DELETE CASCADE
 );
 
@@ -201,7 +244,10 @@ CREATE TABLE IF NOT EXISTS discussions (
 CREATE TABLE IF NOT EXISTS user_settings (
     key TEXT PRIMARY KEY,
     value TEXT,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    -- Colonnes ajoutées
+    type TEXT DEFAULT 'string',
+    description TEXT
 );
 
 -- =====================================================
@@ -211,6 +257,21 @@ CREATE TABLE IF NOT EXISTS cache (
     key TEXT PRIMARY KEY,
     value TEXT,
     expires_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    -- Colonnes ajoutées
+    accessed_count INTEGER DEFAULT 0,
+    last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =====================================================
+-- TABLE DES STATISTIQUES D'UTILISATION (Nouvelle)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS usage_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    entity_type TEXT,
+    entity_id INTEGER,
+    metadata TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -230,6 +291,17 @@ CREATE INDEX IF NOT EXISTS idx_discussions_lesson ON discussions(lesson_id);
 CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache(expires_at);
 CREATE INDEX IF NOT EXISTS idx_courses_expires ON courses(expires_at);
 
+-- Index supplémentaires pour les nouvelles colonnes
+CREATE INDEX IF NOT EXISTS idx_lessons_completed ON lessons(completed, course_id);
+CREATE INDEX IF NOT EXISTS idx_lessons_progress ON lessons(progress, completed);
+CREATE INDEX IF NOT EXISTS idx_courses_category ON courses(category, downloaded_at);
+CREATE INDEX IF NOT EXISTS idx_sync_priority ON sync_log(priority, created_at, synced);
+CREATE INDEX IF NOT EXISTS idx_media_type_size ON media(type, size);
+CREATE INDEX IF NOT EXISTS idx_usage_stats_event ON usage_stats(event_type, created_at);
+CREATE INDEX IF NOT EXISTS idx_courses_title ON courses(title);
+CREATE INDEX IF NOT EXISTS idx_lessons_title ON lessons(title);
+CREATE INDEX IF NOT EXISTS idx_courses_instructor ON courses(instructor_name);
+
 -- =====================================================
 -- VUES UTILES
 -- =====================================================
@@ -243,7 +315,7 @@ SELECT
     COUNT(DISTINCT CASE WHEN l.completed = 1 THEN l.lesson_id END) as completed_lessons,
     ROUND(AVG(l.progress), 2) as average_progress,
     ROUND(CAST(COUNT(DISTINCT CASE WHEN l.completed = 1 THEN l.lesson_id END) AS FLOAT) / 
-          COUNT(DISTINCT l.lesson_id) * 100, 2) as completion_percentage
+          NULLIF(COUNT(DISTINCT l.lesson_id), 0) * 100, 2) as completion_percentage
 FROM courses c
 LEFT JOIN sections s ON c.course_id = s.course_id
 LEFT JOIN lessons l ON s.section_id = l.section_id
@@ -274,7 +346,8 @@ AFTER UPDATE ON lessons
 WHEN NEW.completed = 1 OR NEW.progress > OLD.progress
 BEGIN
     UPDATE courses 
-    SET last_accessed = CURRENT_TIMESTAMP 
+    SET last_accessed = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
     WHERE course_id = (
         SELECT c.course_id 
         FROM courses c
@@ -299,9 +372,26 @@ CREATE TRIGGER IF NOT EXISTS add_to_sync_on_progress
 AFTER UPDATE ON lessons
 WHEN NEW.progress > OLD.progress OR NEW.completed != OLD.completed
 BEGIN
-    INSERT INTO sync_log (entity_type, entity_id, action, data)
+    INSERT INTO sync_log (entity_type, entity_id, action, data, priority)
     VALUES ('lesson', NEW.lesson_id, 'progress', 
-            json_object('progress', NEW.progress, 'completed', NEW.completed));
+            json_object('progress', NEW.progress, 'completed', NEW.completed), 5);
+END;
+
+-- Mise à jour des timestamps
+CREATE TRIGGER IF NOT EXISTS update_lesson_timestamp
+AFTER UPDATE ON lessons
+BEGIN
+    UPDATE lessons SET updated_at = CURRENT_TIMESTAMP WHERE lesson_id = NEW.lesson_id;
+END;
+
+-- Mise à jour des statistiques d'usage
+CREATE TRIGGER IF NOT EXISTS track_lesson_completion
+AFTER UPDATE ON lessons
+WHEN NEW.completed = 1 AND OLD.completed = 0
+BEGIN
+    INSERT INTO usage_stats (event_type, entity_type, entity_id, metadata)
+    VALUES ('lesson_completed', 'lesson', NEW.lesson_id, 
+            json_object('duration', NEW.duration, 'progress_time', NEW.updated_at));
 END;
 
 -- Nettoyage automatique du cache expiré
