@@ -438,7 +438,11 @@ async function initializeDownloadManager() {
         }
         
         const encryption = require('./lib/encryption');
-        downloadManager = new DownloadManager(database, encryption, apiClient);
+        
+        // Créer le DownloadManager sans apiClient pour l'instant
+        downloadManager = new DownloadManager(database, encryption, null);
+        
+        // L'apiClient sera défini plus tard via setApiClient
         
         log.info('Gestionnaire de téléchargement initialisé');
         
