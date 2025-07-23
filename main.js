@@ -153,9 +153,10 @@ function getOrCreateEncryptionKey() {
 }
 
 // Store sécurisé pour les données sensibles
-const store = new Store({
-    encryptionKey: getOrCreateEncryptionKey().substring(0, 32), // Store nécessite exactement 32 caractères
-    schema: {
+let store;
+
+function initializeStore() {
+    const storeSchema = {
         apiUrl: { type: 'string', default: '' },
         token: { type: 'string', default: '' },
         refreshToken: { type: 'string', default: '' },
@@ -169,8 +170,83 @@ const store = new Store({
         language: { type: 'string', default: 'fr' },
         membershipRestrictions: { type: 'object', default: {} },
         windowBounds: { type: 'object', default: null }
+    };
+
+    try {
+        store = new Store({
+            encryptionKey: getOrCreateEncryptionKey().substring(0, 32),
+            schema: storeSchema
+        });
+        log.info('Store initialisé avec succès');
+        return true;
+    } catch (error) {
+        log.error('Erreur lors de l\'initialisation du store:', error);
+        
+        // Essayer de supprimer le fichier corrompu et recréer
+        try {
+            const configPath = path.join(app.getPath('userData'), 'config.json');
+            if (fs.existsSync(configPath)) {
+                // Créer une sauvegarde avant de supprimer
+                const backupPath = configPath + '.backup';
+                fs.copyFileSync(configPath, backupPath);
+                fs.unlinkSync(configPath);
+                log.info('Fichier config.json corrompu supprimé, sauvegarde créée');
+            }
+            
+            // Réessayer la création
+            store = new Store({
+                encryptionKey: getOrCreateEncryptionKey().substring(0, 32),
+                schema: storeSchema
+            });
+            
+            log.info('Store recréé avec succès après suppression du fichier corrompu');
+            return true;
+        } catch (retryError) {
+            log.error('Impossible de recréer le store:', retryError);
+            
+            // Créer un store temporaire en mémoire
+            store = {
+                data: {},
+                get: function(key, defaultValue) {
+                    return this.data[key] !== undefined ? this.data[key] : (storeSchema[key] ? storeSchema[key].default : defaultValue);
+                },
+                set: function(key, value) {
+                    this.data[key] = value;
+                },
+                delete: function(key) {
+                    delete this.data[key];
+                },
+                clear: function() {
+                    this.data = {};
+                },
+                has: function(key) {
+                    return key in this.data;
+                }
+            };
+            
+            log.warn('Utilisation d\'un store temporaire en mémoire');
+            
+            // Afficher un avertissement à l'utilisateur
+            setTimeout(() => {
+                dialog.showMessageBox(null, {
+                    type: 'warning',
+                    title: 'Avertissement',
+                    message: 'Problème de configuration détecté',
+                    detail: 'Les paramètres ne pourront pas être sauvegardés de manière permanente durant cette session.\n\n' +
+                            'Pour résoudre ce problème, veuillez redémarrer l\'application ou contacter le support.',
+                    buttons: ['Continuer', 'Quitter'],
+                    defaultId: 0
+                }).then((result) => {
+                    if (result.response === 1) {
+                        app.quit();
+                    }
+                });
+            }, 1000);
+            
+            return false;
+        }
     }
-});
+}
 
 // ==================== GESTION DES ABONNEMENTS ====================
 
@@ -242,7 +318,9 @@ function applyMembershipRestrictions(subscription) {
         maxDownloadSize: config.membership.freeTierLimits.maxDownloadSize
     };
     
-    store.set('membershipRestrictions', restrictions);
+    if (store && store.set) {
+        store.set('membershipRestrictions', restrictions);
+    }
     
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('apply-restrictions', restrictions);
@@ -250,7 +328,9 @@ function applyMembershipRestrictions(subscription) {
 }
 
 function removeMembershipRestrictions() {
-    store.delete('membershipRestrictions');
+    if (store && store.delete) {
+        store.delete('membershipRestrictions');
+    }
     
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('remove-restrictions');
@@ -360,6 +440,12 @@ function cleanOldLogs() {
 async function initializeApp() {
     try {
         log.info('Initialisation de l\'application...');
+        
+        // Initialiser le store en premier
+        const storeInitialized = initializeStore();
+        if (!storeInitialized) {
+            log.warn('Store non initialisé correctement, utilisation du mode dégradé');
+        }
         
         // Initialiser la base de données
         await initializeDatabase();
@@ -477,7 +563,7 @@ function createSplashWindow() {
 
 function createMainWindow() {
     // Restaurer les dimensions de la fenêtre
-    const windowBounds = store.get('windowBounds');
+    const windowBounds = store ? store.get('windowBounds') : null;
     
     mainWindow = new BrowserWindow({
         width: windowBounds?.width || config.window.width,
@@ -542,7 +628,7 @@ function createMainWindow() {
                 mainWindow.show();
                 
                 // Vérifier si l'utilisateur est connecté
-                const token = store.get('token');
+                const token = store ? store.get('token') : null;
                 if (token) {
                     mainWindow.webContents.send('auto-login-success');
                 }
@@ -560,7 +646,7 @@ function createMainWindow() {
             return;
         }
         
-        if (!mainWindow.isDestroyed()) {
+        if (!mainWindow.isDestroyed() && store && store.set) {
             const bounds = mainWindow.getBounds();
             store.set('windowBounds', bounds);
         }
