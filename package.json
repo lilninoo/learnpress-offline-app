@@ -49,8 +49,8 @@
     "build-win": "electron-builder --win --x64",
     "build-mac": "electron-builder --mac --universal",
     "build-linux": "electron-builder --linux --x64",
-    "test-startup": "node test-startup.js",
     "clean-auth": "node scripts/clean-auth.js",
+    "test-startup": "node scripts/test-startup.js",
     "clean-all": "node scripts/clean-auth.js --full"
 
   },
