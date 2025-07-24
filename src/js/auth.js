@@ -40,10 +40,33 @@ function initializeDashboardAfterLogin() {
     // Attendre que tous les modules soient chargés
     let checkInterval;
     let attempts = 0;
-    const maxAttempts = 50; // 10 secondes max
+    const maxAttempts = 50;
+    const maxWaitTime = 30000; // 30 secondes max
+    const startTime = Date.now();
+
     
     const checkAndLoadCourses = async () => {
         attempts++;
+
+
+                // ⏱ Timeout absolu
+        if (Date.now() - startTime > maxWaitTime) {
+            clearInterval(checkInterval);
+            console.error('[Auth] Timeout - Abandon du chargement');
+
+            const container = document.getElementById('courses-container');
+            if (container) {
+                container.innerHTML = `
+                    <div class="message message-error">
+                        <p>Le chargement des cours a dépassé le délai imparti.</p>
+                        <button class="btn btn-primary" onclick="retryLoadCourses()">
+                            Réessayer
+                        </button>
+                    </div>
+                `;
+            }
+            return;
+        }
         
         // Vérifier si les modules sont prêts
         const modulesReady = !!(
@@ -123,32 +146,23 @@ function initializeDashboardAfterLogin() {
 }
 
 // Fonction globale pour le retry
-window.retryLoadCourses = async function() {
+window.retryLoadCourses = function() {
+    console.log('[Auth] Nouvelle tentative de chargement des cours...');
+
     const container = document.getElementById('courses-container');
     if (container) {
-        container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+        container.innerHTML = `
+            <div class="loading" style="padding: 40px 0; text-align: center;">
+                <div class="spinner"></div>
+                <p style="margin-top: 16px;">Nouvelle tentative de chargement...</p>
+            </div>
+        `;
     }
-    
-    try {
-        if (window.coursesManager && window.coursesManager.loadCourses) {
-            await window.coursesManager.loadCourses();
-        } else if (window.loadCourses) {
-            await window.loadCourses();
-        }
-    } catch (error) {
-        console.error('[Auth] Erreur lors du retry:', error);
-        if (container) {
-            container.innerHTML = `
-                <div class="message message-error">
-                    <p>Nouvelle erreur: ${error.message}</p>
-                    <button class="btn btn-primary" onclick="retryLoadCourses()">
-                        Réessayer encore
-                    </button>
-                </div>
-            `;
-        }
-    }
+
+    // On relance entièrement l'initialisation du dashboard (modules + cours + stats + sync)
+    initializeDashboardAfterLogin();
 };
+
 
 // Vérifier l'auto-login au chargement
 document.addEventListener('DOMContentLoaded', async () => {
