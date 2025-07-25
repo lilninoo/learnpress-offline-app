@@ -24,7 +24,8 @@
   ],
   "scripts": {
     "start": "electron .",
-    "dev": "NODE_ENV=development electron .",
+    "dev": "cross-env NODE_ENV=development electron .",
+    "dev:reload": "cross-env NODE_ENV=development nodemon --exec electron .",
     "test": "mocha tests/**/*.test.js --timeout 10000",
     "test:watch": "mocha tests/**/*.test.js --watch",
     "test:coverage": "nyc mocha tests/**/*.test.js",
@@ -50,8 +51,9 @@
     "build-mac": "electron-builder --mac --universal",
     "build-linux": "electron-builder --linux --x64",
     "clean-auth": "node scripts/clean-auth.js",
-    "clean-all": "node scripts/clean-auth.js --full"
-
+    "clean-all": "node scripts/clean-auth.js --full",
+    "logs": "tail -f ~/.config/learnpress-offline/logs/*.log",
+    "logs:win": "powershell Get-Content $env:APPDATA/learnpress-offline/logs/*.log -Wait"
   },
   "engines": {
     "node": ">=16.0.0",
@@ -60,13 +62,16 @@
   "devDependencies": {
     "@electron/notarize": "^2.1.0",
     "chai": "^4.3.10",
-    "electron": "^27.0.0",
+    "cross-env": "^7.0.3",
+    "electron": "^27.3.11",
     "electron-builder": "^24.6.4",
     "electron-devtools-installer": "^3.2.0",
     "electron-rebuild": "^3.2.9",
+    "electron-reload": "^2.0.0-alpha.1",
     "eslint": "^8.50.0",
     "jsdom": "^23.0.0",
     "mocha": "^10.2.0",
+    "nodemon": "^3.0.2",
     "nyc": "^15.1.0",
     "sinon": "^17.0.0",
     "spectron": "^19.0.0"
@@ -78,10 +83,12 @@
     "electron-log": "^5.0.0",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.1.4",
-    "express": "^5.1.0",
-    "form-data": "^4.0.4",
+    "express": "^4.18.2",
+    "form-data": "^4.0.0",
     "node-machine-id": "^1.1.12",
-    "uuid": "^11.1.0"
+    "uuid": "^9.0.1",
+    "winston": "^3.11.0",
+    "winston-daily-rotate-file": "^4.7.1"
   },
   "build": {
     "appId": "com.teachmemore.learnpress-offline",
@@ -109,12 +116,22 @@
       "!logs/**/*",
       "!temp/**/*",
       "!scripts/",
-      "!wordpress-plugin/"
+      "!wordpress-plugin/",
+      "!node_modules/**/test/**",
+      "!node_modules/**/tests/**",
+      "!node_modules/**/*.md",
+      "!node_modules/**/*.map",
+      "!node_modules/**/*.ts",
+      "!**/*.log"
     ],
     "extraResources": [
       {
         "from": "assets",
         "to": "assets"
+      },
+      {
+        "from": "database/schema.sql",
+        "to": "database/schema.sql"
       }
     ],
     "mac": {
@@ -127,17 +144,11 @@
       "target": [
         {
           "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "arch": ["x64", "arm64"]
         },
         {
           "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "arch": ["x64", "arm64"]
         }
       ],
       "type": "distribution",
@@ -156,16 +167,15 @@
           "path": "/Applications"
         }
       ],
-      "title": "${productName} ${version}"
+      "title": "${productName} ${version}",
+      "background": "build/background.png",
+      "icon": "build/icon.icns"
     },
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64",
-            "ia32"
-          ]
+          "arch": ["x64", "ia32"]
         },
         {
           "target": "portable"
@@ -187,15 +197,14 @@
       "createStartMenuShortcut": true,
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
-      "license": "LICENSE.md"
+      "license": "LICENSE.md",
+      "warningsAsErrors": false
     },
     "linux": {
       "target": [
         {
           "target": "AppImage",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         },
         {
           "target": "deb"
@@ -214,12 +223,13 @@
         "MimeType": "x-scheme-handler/learnpress"
       }
     },
+    "appImage": {
+      "systemIntegration": "ask"
+    },
     "protocols": [
       {
         "name": "LearnPress Protocol",
-        "schemes": [
-          "learnpress"
-        ]
+        "schemes": ["learnpress"]
       }
     ],
     "fileAssociations": [
@@ -232,15 +242,13 @@
     ]
   },
   "nyc": {
-    "reporter": [
-      "html",
-      "text",
-      "lcov"
-    ],
+    "reporter": ["html", "text", "lcov"],
     "exclude": [
       "tests/**",
       "scripts/**",
-      "build/**"
+      "build/**",
+      "dist/**",
+      "node_modules/**"
     ],
     "all": true,
     "check-coverage": true,
@@ -248,5 +256,23 @@
     "statements": 80,
     "functions": 80,
     "branches": 80
+  },
+  "nodemonConfig": {
+    "watch": [
+      "main.js",
+      "preload.js",
+      "lib/**/*.js",
+      "src/**/*.js",
+      "src/**/*.html",
+      "src/**/*.css"
+    ],
+    "ext": "js,html,css",
+    "ignore": [
+      "node_modules/**",
+      "dist/**",
+      "database/*.db",
+      "logs/**"
+    ],
+    "delay": 1000
   }
 }
