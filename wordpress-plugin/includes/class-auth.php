@@ -795,36 +795,44 @@ class COL_LMS_Auth extends COL_LMS_API_Base {
     /**
      * Sauvegarder le token
      */
-    private function save_token($user_id, $device_id, $device_name, $device_type, $token, $refresh_token, $lifetime) {
-        global $wpdb;
-        
-        // Supprimer l'ancien token du même appareil
-        $wpdb->delete(
-            $wpdb->prefix . 'col_lms_tokens',
-            array(
-                'user_id' => $user_id,
-                'device_id' => $device_id
-            )
-        );
-        
-        // Insérer le nouveau
-        $result = $wpdb->insert(
-            $wpdb->prefix . 'col_lms_tokens',
-            array(
-                'user_id' => $user_id,
-                'device_id' => $device_id,
-                'device_name' => $device_name,
-                'device_type' => $device_type,
-                'token_hash' => wp_hash($token),
-                'refresh_token_hash' => wp_hash($refresh_token),
-                'expires_at' => date('Y-m-d H:i:s', time() + $lifetime),
-                'last_used' => current_time('mysql'),
-                'created_at' => current_time('mysql')
-            )
-        );
-        
-        return $result ? $wpdb->insert_id : false;
-    }
+// Dans wordpress-plugin/includes/class-auth.php
+// Modifier la méthode save_token (cherchez cette fonction)
+
+private function save_token($user_id, $device_id, $device_name, $device_type, $token, $refresh_token, $lifetime) {
+    global $wpdb;
+    
+    // Supprimer l'ancien token du même appareil
+    $wpdb->delete(
+        $wpdb->prefix . 'col_lms_tokens',
+        array(
+            'user_id' => $user_id,
+            'device_id' => $device_id
+        )
+    );
+    
+    // Durée de vie étendue pour le refresh token
+    // Le token principal expire selon $lifetime (1 heure par défaut)
+    // Mais on stocke une date d'expiration plus longue pour permettre le refresh
+    $refresh_expiry = 30 * 24 * 3600; // 30 jours au lieu de $lifetime
+    
+    // Insérer le nouveau
+    $result = $wpdb->insert(
+        $wpdb->prefix . 'col_lms_tokens',
+        array(
+            'user_id' => $user_id,
+            'device_id' => $device_id,
+            'device_name' => $device_name,
+            'device_type' => $device_type,
+            'token_hash' => wp_hash($token),
+            'refresh_token_hash' => wp_hash($refresh_token),
+            'expires_at' => date('Y-m-d H:i:s', time() + $refresh_expiry), // Utiliser la durée étendue
+            'last_used' => current_time('mysql'),
+            'created_at' => current_time('mysql')
+        )
+    );
+    
+    return $result ? $wpdb->insert_id : false;
+}
     
     /**
      * Logger une tentative échouée
